@@ -1,58 +1,67 @@
-import { ArrowLeft } from "lucide-react";
-import ProgressBar from "../../../components/ProgressBar";
-import { formatDate } from "../../../utils/formatters";
+import { ShieldCheck } from "lucide-react";
+
+function safeText(value, fallback = "No disponible") {
+  if (value === null || value === undefined || value === "") return fallback;
+  return String(value);
+}
+
+function safeNumber(value, fallback = 0) {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : fallback;
+}
 
 export default function ActiveRouteCard({
-  selectedRoute,
-  registeredDevice,
-  activeExecution,
-  completed,
-  total,
-  routeFinished,
-  onBackToList,
+  route = {},
+  execution = {},
+  completed = 0,
+  total = 0,
 }) {
+  const routeName = safeText(
+    route?.nombre || route?.recorridoNombre || execution?.plantillaNombre,
+    "Recorrido"
+  );
+
+  const propertyName = safeText(
+    route?.propiedadNombre ||
+      execution?.propiedadNombre ||
+      route?.propiedad ||
+      route?.propiedadId,
+    "Propiedad"
+  );
+
+  const completedSafe = safeNumber(completed);
+  const totalSafe = safeNumber(total);
+
+  const porcentaje =
+    totalSafe > 0 ? Math.min(100, Math.round((completedSafe / totalSafe) * 100)) : 0;
+
   return (
-    <section className="route-card">
-      <div className="route-header">
+    <article className="active-route-card compact-active-route">
+      <div className="active-route-header">
         <div>
-          <p className="eyebrow">Recorrido seleccionado</p>
-
-          <h2>{selectedRoute.nombre}</h2>
-
-          <p className="route-meta">
-            Propiedad: {selectedRoute.propiedadNombre || selectedRoute.propiedadId}
-          </p>
-
-          {registeredDevice?.nombre && (
-            <p className="route-meta">Equipo: {registeredDevice.nombre}</p>
-          )}
+          <span className="guardia-kicker">Recorrido activo</span>
+          <h2>{routeName}</h2>
+          <p>{propertyName}</p>
         </div>
 
-        <div className="route-actions">
-          {routeFinished && (
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={onBackToList}
-            >
-              <ArrowLeft size={17} />
-              Elegir otro
-            </button>
-          )}
+        <div className="active-route-status">
+          <ShieldCheck size={18} />
+          <span>
+            {completedSafe}/{totalSafe} puntos
+          </span>
         </div>
       </div>
 
-      <ProgressBar completed={completed} total={total} />
-
-      {routeFinished && (
-        <div className="finished-box">
-          <strong>Recorrido finalizado localmente</strong>
-          <span>
-            Inicio: {formatDate(activeExecution?.iniciadaEn)} · Cierre:{" "}
-            {formatDate(activeExecution?.finalizadaEn)}
-          </span>
+      <div className="active-route-progress">
+        <div className="active-route-progress-info">
+          <span>Avance del recorrido</span>
+          <strong>{porcentaje}%</strong>
         </div>
-      )}
-    </section>
+
+        <div className="active-route-progress-bar">
+          <div style={{ width: `${porcentaje}%` }} />
+        </div>
+      </div>
+    </article>
   );
 }

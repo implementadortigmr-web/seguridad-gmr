@@ -2195,3 +2195,238 @@ h1, h2, h3, p { margin: 0; }
     transform: rotate(360deg);
   }
 }
+
+.sync-progress-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 220;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.52);
+}
+
+.sync-progress-modal {
+  width: min(420px, 100%);
+  padding: 26px;
+  border-radius: 24px;
+  background: white;
+  text-align: center;
+  box-shadow: 0 26px 70px rgba(15, 23, 42, 0.3);
+}
+
+.sync-progress-modal h3 {
+  margin: 0;
+  color: var(--navy);
+  font-size: 1.35rem;
+}
+
+.sync-progress-modal p {
+  margin: 12px 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.sync-progress-modal span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--navy);
+  font-weight: 800;
+  font-size: 0.9rem;
+}
+
+.sync-progress-bar {
+  width: 100%;
+  height: 12px;
+  margin: 16px 0 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e5eef3;
+}
+
+.sync-progress-bar div {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--blue);
+  transition: width 0.25s ease;
+}
+
+.guardia-loading-card {
+  min-height: 260px;
+  display: grid;
+  place-items: center;
+  padding: 30px;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: white;
+  text-align: center;
+}
+
+.guardia-loading-card p {
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.unauthorized-device-card {
+  width: min(720px, 100%);
+  margin: 0 auto;
+  padding: 34px 24px;
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  background: white;
+  text-align: center;
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.08);
+}
+
+.device-icon-box {
+  width: 108px;
+  height: 108px;
+  margin: 0 auto 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 32px;
+  background: #feecec;
+  color: #c94a4a;
+}
+
+.unauthorized-device-card h2 {
+  margin: 0;
+  color: var(--navy);
+  font-size: clamp(1.25rem, 4vw, 1.8rem);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.unauthorized-device-card p {
+  max-width: 520px;
+  margin: 12px auto 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.device-code-box {
+  margin: 24px auto;
+  padding: 18px;
+  border: 1px dashed #b8c6d1;
+  border-radius: 18px;
+  background: #f8fafc;
+}
+
+.device-code-box span {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.device-code-box strong {
+  display: block;
+  margin-bottom: 14px;
+  color: var(--navy);
+  font-size: clamp(0.9rem, 3vw, 1.05rem);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.device-warning-message {
+  margin: 16px auto;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #fff7ed;
+  color: #9a4c00;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+@media (max-width: 640px) {
+  .unauthorized-device-card {
+    padding: 28px 16px;
+    border-radius: 24px;
+  }
+
+  .device-icon-box {
+    width: 92px;
+    height: 92px;
+    border-radius: 28px;
+  }
+
+  .device-code-box {
+    padding: 14px;
+  }
+
+  .device-code-box .secondary-button,
+  .unauthorized-device-card .primary-button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+.device-info-box {
+  margin: -10px auto 20px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+
+.error-page {
+  min-height: 100dvh;
+  padding: 28px;
+  display: grid;
+  place-items: center;
+  background: #f4f7fa;
+}
+
+.error-card {
+  width: min(820px, 100%);
+  padding: 28px;
+  border-radius: 24px;
+  background: white;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.16);
+}
+
+.error-card h1 {
+  margin: 0 0 10px;
+  color: #b91c1c;
+  font-size: clamp(2rem, 6vw, 3.5rem);
+}
+
+.error-card p {
+  color: #1f2937;
+  line-height: 1.45;
+}
+
+.error-card h3 {
+  margin: 20px 0 8px;
+  color: #0f172a;
+}
+
+.error-card pre {
+  max-height: 260px;
+  overflow: auto;
+  padding: 16px;
+  border-radius: 16px;
+  background: #111827;
+  color: white;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.error-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+
+.error-actions button {
+  min-height: 44px;
+}

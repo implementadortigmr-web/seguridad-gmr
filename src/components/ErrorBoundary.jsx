@@ -19,7 +19,8 @@ export default class ErrorBoundary extends React.Component {
   }
 
   componentDidCatch(error, errorInfo) {
-    console.error("ErrorBoundary detectó un error:", error, errorInfo);
+    console.error("Error capturado por ErrorBoundary:", error);
+    console.error("Component stack:", errorInfo);
 
     this.setState({
       error,
@@ -27,88 +28,68 @@ export default class ErrorBoundary extends React.Component {
     });
   }
 
+  copyError = async () => {
+    const errorText = `
+Mensaje:
+${this.state.error?.message || "Sin mensaje"}
+
+Stack:
+${this.state.error?.stack || "Sin stack"}
+
+Component stack:
+${this.state.errorInfo?.componentStack || "Sin component stack"}
+`;
+
+    try {
+      await navigator.clipboard.writeText(errorText);
+      alert("Error copiado.");
+    } catch {
+      alert(errorText);
+    }
+  };
+
+  reloadApp = () => {
+    window.location.reload();
+  };
+
   render() {
-    if (this.state.hasError) {
-      return (
-        <div
-          style={{
-            minHeight: "100vh",
-            padding: 24,
-            background: "#f8fafc",
-            color: "#0f172a",
-            fontFamily: "Arial, sans-serif",
-          }}
-        >
-          <div
-            style={{
-              maxWidth: 720,
-              margin: "40px auto",
-              padding: 24,
-              borderRadius: 18,
-              background: "white",
-              border: "1px solid #e2e8f0",
-              boxShadow: "0 12px 30px rgba(15, 23, 42, 0.12)",
-            }}
-          >
-            <h1 style={{ marginTop: 0, color: "#b91c1c" }}>
-              Error al cargar la app
-            </h1>
+    if (!this.state.hasError) {
+      return this.props.children;
+    }
 
-            <p>
-              La app encontró un error de JavaScript. Copia este mensaje o toma
-              captura para corregirlo.
-            </p>
+    return (
+      <main className="error-page">
+        <section className="error-card">
+          <h1>Error al cargar la app</h1>
 
-            <pre
-              style={{
-                padding: 14,
-                borderRadius: 12,
-                background: "#0f172a",
-                color: "#f8fafc",
-                overflowX: "auto",
-                fontSize: 13,
-                whiteSpace: "pre-wrap",
-              }}
-            >
-              {String(this.state.error?.message || this.state.error)}
-            </pre>
+          <p>
+            La app encontró un error de JavaScript. Copia este mensaje o toma
+            captura para corregirlo.
+          </p>
 
-            {this.state.errorInfo?.componentStack && (
-              <pre
-                style={{
-                  padding: 14,
-                  borderRadius: 12,
-                  background: "#1e293b",
-                  color: "#f8fafc",
-                  overflowX: "auto",
-                  fontSize: 12,
-                  whiteSpace: "pre-wrap",
-                }}
-              >
-                {this.state.errorInfo.componentStack}
-              </pre>
-            )}
+          <h3>Mensaje</h3>
+          <pre>{this.state.error?.message || "Error desconocido"}</pre>
 
-            <button
-              type="button"
-              onClick={() => window.location.reload()}
-              style={{
-                marginTop: 16,
-                padding: "12px 18px",
-                border: 0,
-                borderRadius: 12,
-                background: "#0f5d75",
-                color: "white",
-                fontWeight: 700,
-              }}
-            >
+          <h3>Stack técnico</h3>
+          <pre>{this.state.error?.stack || "Sin stack disponible"}</pre>
+
+          <h3>Componente</h3>
+          <pre>
+            {this.state.errorInfo?.componentStack ||
+              "Sin información del componente"}
+          </pre>
+
+          <div className="error-actions">
+            <button type="button" className="primary-button" onClick={this.copyError}>
+              Copiar error
+            </button>
+
+            <button type="button" className="secondary-button" onClick={this.reloadApp}>
               Recargar app
             </button>
           </div>
-        </div>
-      );
-    }
-
-    return this.props.children;
+        </section>
+      </main>
+    );
   }
 }

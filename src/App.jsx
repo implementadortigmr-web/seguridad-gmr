@@ -1,9 +1,11 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { ShieldCheck } from "lucide-react";
+import { signOut } from "firebase/auth";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import { auth } from "./services/firebase";
 import { routeForRole } from "./utils/roles";
 import LoginPage from "./pages/LoginPage";
-import GuardiaDashboard from "./pages/GuardiaDashboard";
+import GuardiaDashboard from "./pages/guardia/GuardiaDashboard";
 import SupervisorDashboard from "./pages/SupervisorDashboard";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 
@@ -17,6 +19,28 @@ function LoadingPage() {
   );
 }
 
+async function logout() {
+  try {
+    await signOut(auth);
+  } catch (error) {
+    console.error("Error cerrando sesión:", error);
+  } finally {
+    try {
+      localStorage.removeItem("usuarioActivo");
+      sessionStorage.clear();
+    } catch {
+      // No hacer nada
+    }
+
+    window.location.hash = "#/";
+    window.location.reload();
+  }
+}
+
+function normalizarRol(rol) {
+  return String(rol || "").trim().toLowerCase();
+}
+
 function HomeRedirect() {
   const { profile, loading } = useAuth();
 
@@ -26,13 +50,24 @@ function HomeRedirect() {
   return <Navigate to={routeForRole(profile.rol)} replace />;
 }
 
-function ProtectedRoute({ allowedRoles, children }) {
+function ProtectedRoute({ allowedRoles = [], children }) {
   const { profile, loading } = useAuth();
 
   if (loading) return <LoadingPage />;
   if (!profile) return <Navigate to="/" replace />;
-  if (!allowedRoles.includes(profile.rol)) {
-    return <Navigate to={routeForRole(profile.rol)} replace />;
+
+  const rol = normalizarRol(profile.rol);
+  const rolesPermitidos = Array.isArray(allowedRoles) ? allowedRoles : [];
+
+  if (!rolesPermitidos.includes(rol)) {
+    return <Navigate to={routeForRole(rol)} replace />;
+  }
+
+  if (typeof children === "function") {
+    return children({
+      profile,
+      logout,
+    });
   }
 
   return children;
@@ -47,7 +82,9 @@ function AppRoutes() {
         path="/admin"
         element={
           <ProtectedRoute allowedRoles={["administrador"]}>
-            <AdminDashboard />
+            {({ profile, logout }) => (
+              <AdminDashboard profile={profile} logout={logout} />
+            )}
           </ProtectedRoute>
         }
       />
@@ -56,7 +93,9 @@ function AppRoutes() {
         path="/supervisor"
         element={
           <ProtectedRoute allowedRoles={["supervisor"]}>
-            <SupervisorDashboard />
+            {({ profile, logout }) => (
+              <SupervisorDashboard profile={profile} logout={logout} />
+            )}
           </ProtectedRoute>
         }
       />
@@ -65,7 +104,9 @@ function AppRoutes() {
         path="/guardia"
         element={
           <ProtectedRoute allowedRoles={["guardia"]}>
-            <GuardiaDashboard />
+            {({ profile, logout }) => (
+              <GuardiaDashboard profile={profile} logout={logout} />
+            )}
           </ProtectedRoute>
         }
       />

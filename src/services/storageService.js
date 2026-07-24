@@ -1,18 +1,12 @@
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import { storage } from "./firebase";
-import { createThumbnail } from "../utils/image";
+import { compressImage, createThumbnail } from "../utils/image";
 
 function limpiarRuta(valor = "") {
   return String(valor || "")
     .trim()
     .replace(/[^\w.-]/g, "_")
     .slice(0, 100);
-}
-
-function obtenerExtensionDesdeTipo(tipo = "") {
-  if (tipo.includes("png")) return "png";
-  if (tipo.includes("webp")) return "webp";
-  return "jpg";
 }
 
 export async function subirFotoEvidencia({ evidencia, ejecucion }) {
@@ -32,42 +26,50 @@ export async function subirFotoEvidencia({ evidencia, ejecucion }) {
   const guardiaId = limpiarRuta(evidencia.guardiaId || ejecucion.guardiaId);
   const ejecucionId = limpiarRuta(ejecucion.id || evidencia.ejecucionId);
   const puntoId = limpiarRuta(evidencia.puntoId);
-  const extension = obtenerExtensionDesdeTipo(evidencia.foto.type);
 
   const archivoBase = `${String(evidencia.puntoOrden || 0).padStart(
     2,
     "0"
   )}_${puntoId}_${Date.now()}`;
 
-  const fotoPath = `evidencias/${propiedadId}/${guardiaId}/${ejecucionId}/${archivoBase}.${extension}`;
+  const fotoPath = `evidencias/${propiedadId}/${guardiaId}/${ejecucionId}/${archivoBase}.jpg`;
   const thumbPath = `evidencias/${propiedadId}/${guardiaId}/${ejecucionId}/${archivoBase}_thumb.jpg`;
 
   const fotoRef = ref(storage, fotoPath);
   const thumbRef = ref(storage, thumbPath);
 
-  const thumbnail = await createThumbnail(evidencia.foto);
+  /*
+    IMPORTANTE:
+    Aunque la foto ya venga comprimida desde el recorrido,
+    aquí la comprimimos otra vez para evitar fotos grandes
+    guardadas en pendientes antiguos.
+  */
+  const fotoOptimizada = await compressImage(evidencia.foto);
+  const thumbnail = await createThumbnail(fotoOptimizada);
 
-  await uploadBytes(fotoRef, evidencia.foto, {
-    contentType: evidencia.foto.type || "image/jpeg",
-    customMetadata: {
-      ejecucionId,
-      puntoId,
-      guardiaId,
-      propiedadId,
-      tipo: "foto_original",
-    },
-  });
+  await Promise.all([
+    uploadBytes(fotoRef, fotoOptimizada, {
+      contentType: "image/jpeg",
+      customMetadata: {
+        ejecucionId,
+        puntoId,
+        guardiaId,
+        propiedadId,
+        tipo: "foto_original",
+      },
+    }),
 
-  await uploadBytes(thumbRef, thumbnail, {
-    contentType: "image/jpeg",
-    customMetadata: {
-      ejecucionId,
-      puntoId,
-      guardiaId,
-      propiedadId,
-      tipo: "thumbnail",
-    },
-  });
+    uploadBytes(thumbRef, thumbnail, {
+      contentType: "image/jpeg",
+      customMetadata: {
+        ejecucionId,
+        puntoId,
+        guardiaId,
+        propiedadId,
+        tipo: "thumbnail",
+      },
+    }),
+  ]);
 
   const [fotoUrl, fotoThumbUrl] = await Promise.all([
     getDownloadURL(fotoRef),

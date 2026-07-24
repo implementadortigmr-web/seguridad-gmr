@@ -216,28 +216,32 @@ export default function ReportesPanel({ ejecuciones, evidencias }) {
     return map;
   }, [evidencias]);
 
-  const selectedExecution =
-    ejecucionesFiltradas.find((item) => item.id === selectedExecutionId) ||
-    null;
+  
+const ejecucionesSeguras = Array.isArray(ejecucionesFiltradas)
+  ? ejecucionesFiltradas
+  : [];
 
-  const selectedEvidence = selectedExecution
-    ? evidenciasPorEjecucion.get(selectedExecution.id) || []
-    : [];
+const selectedExecution =
+  ejecucionesSeguras.find((item) => item.id === selectedExecutionId) || null;
 
-  useEffect(() => {
-    if (!ejecucionesFiltradas.length) {
-      setSelectedExecutionId("");
-      return;
-    }
+const selectedEvidence = selectedExecution
+  ? evidenciasPorEjecucion.get(selectedExecution.id) || []
+  : [];
 
-    const existeSeleccion = ejecucionesFiltradas.some(
-      (ejecucion) => ejecucion.id === selectedExecutionId
-    );
+useEffect(() => {
+  if (!ejecucionesSeguras.length) {
+    setSelectedExecutionId("");
+    return;
+  }
 
-    if (!existeSeleccion) {
-      setSelectedExecutionId(ejecucionesFiltradas[0].id);
-    }
-  }, [ejecucionesFiltradas, selectedExecutionId]);
+  const existeSeleccion = ejecucionesSeguras.some(
+    (ejecucion) => ejecucion.id === selectedExecutionId
+  );
+
+  if (!existeSeleccion) {
+    setSelectedExecutionId(ejecucionesSeguras[0].id);
+  }
+}, [ejecucionesSeguras, selectedExecutionId]);
 
   function limpiarFiltros() {
     setSelectedPropertyId("todas");
@@ -388,9 +392,9 @@ async function handleGeneratePdf() {
         </button>
 
         <div className="report-filter-summary">
-          <strong>{ejecucionesFiltradas.length}</strong>
+          <strong>{ejecucionesSeguras.length}</strong>
           <span>
-            {ejecucionesFiltradas.length === 1
+            {ejecucionesSeguras.length === 1
               ? "recorrido encontrado"
               : "recorridos encontrados"}
           </span>
@@ -399,8 +403,8 @@ async function handleGeneratePdf() {
 
       <div className="reports-grid">
         <div className="reports-list">
-          {ejecucionesFiltradas.length ? (
-            ejecucionesFiltradas.map((ejecucion) => {
+          {ejecucionesSeguras.length ? (
+            ejecucionesSeguras.map((ejecucion) => {
               const activa = selectedExecutionId === ejecucion.id;
               const evidenciasCount =
                 evidenciasPorEjecucion.get(ejecucion.id)?.length || 0;

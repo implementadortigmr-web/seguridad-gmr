@@ -1,5 +1,9 @@
-import { Camera, CheckCircle2, ImageOff, RotateCcw, Save, X } from "lucide-react";
-import { isNativeApp } from "../../../services/nativeCaptureService";
+import { Camera as CameraIcon, ImageOff, Save, X } from "lucide-react";
+import {
+  Camera,
+  CameraResultType,
+  CameraSource,
+} from "@capacitor/camera";
 
 export default function EvidenceCaptureModal({
   point,
@@ -10,26 +14,70 @@ export default function EvidenceCaptureModal({
   onChangeComment,
   onClose,
   onNativePhoto,
-  onWebPhoto,
   onClearPhoto,
   onSave,
 }) {
   if (!point) return null;
 
-  const commentIsEmpty = !comment.trim();
-  const canSave = hasPhoto && !commentIsEmpty && !saving;
+  async function handleTakePhoto() {
+    if (saving) return;
+
+    try {
+      try {
+        await Camera.requestPermissions({
+          permissions: ["camera"],
+        });
+      } catch (permissionError) {
+        console.warn("Permiso de cámara:", permissionError);
+      }
+
+      const photo = await Camera.getPhoto({
+        quality: 65,
+        allowEditing: false,
+        resultType: CameraResultType.Uri,
+        source: CameraSource.Camera,
+        saveToGallery: false,
+        correctOrientation: true,
+        width: 1200,
+        height: 1200,
+      });
+
+      if (typeof onNativePhoto === "function") {
+        await onNativePhoto(photo);
+      }
+    } catch (error) {
+      console.error("Error abriendo cámara:", error);
+
+      if (
+        String(error?.message || "")
+          .toLowerCase()
+          .includes("cancel")
+      ) {
+        return;
+      }
+
+      alert(
+        "No fue posible abrir la cámara. Revisa que la app tenga permiso de cámara en el teléfono."
+      );
+    }
+  }
 
   return (
     <div className="capture-modal-overlay">
       <div className="capture-modal evidence-flow-modal">
         <div className="capture-modal-header">
           <div>
-            <p className="eyebrow">Evidencia del punto</p>
-            <h3>{point.nombre}</h3>
+            <span className="guardia-kicker">Evidencia del punto</span>
+            <h3>{point?.nombre || point?.puntoNombre || "Punto"}</h3>
           </div>
 
-          <button type="button" onClick={onClose} disabled={saving}>
-            <X size={18} />
+          <button
+            type="button"
+            className="icon-button"
+            onClick={onClose}
+            disabled={saving}
+          >
+            <X size={20} />
           </button>
         </div>
 
@@ -39,71 +87,53 @@ export default function EvidenceCaptureModal({
             <strong>Fotografía obligatoria</strong>
           </div>
 
-          {hasPhoto ? (
-            <div className="loaded-photo-box">
-              {photoPreview ? (
-                <img src={photoPreview} alt={`Evidencia ${point.nombre}`} />
-              ) : (
-                <div className="photo-loaded-placeholder">
-                  <CheckCircle2 size={26} />
-                  Foto cargada correctamente
-                </div>
-              )}
+          <div className="loaded-photo-box">
+            {hasPhoto && photoPreview ? (
+              <>
+                <img src={photoPreview} alt="Evidencia del punto" />
 
-              <div className="photo-loaded-status">
-                <CheckCircle2 size={17} />
-                <span>Foto cargada</span>
-              </div>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={onClearPhoto}
+                  disabled={saving}
+                >
+                  Quitar foto
+                </button>
+              </>
+            ) : (
+              <div className="photo-placeholder-box">
+                <ImageOff size={38} />
 
-              <button
-                type="button"
-                className="secondary-button retake-photo-button"
-                onClick={onClearPhoto}
-                disabled={saving}
-              >
-                <RotateCcw size={16} />
-                Tomar otra foto
-              </button>
-            </div>
-          ) : (
-            <div className="empty-photo-box">
-              <ImageOff size={34} />
-              <strong>Sin foto cargada</strong>
-              <span>Primero toma o selecciona la foto del punto.</span>
+                <strong>Sin foto cargada</strong>
 
-              {isNativeApp() ? (
+                <p>Primero toma o selecciona la foto del punto.</p>
+
                 <button
                   type="button"
                   className="primary-button"
-                  onClick={onNativePhoto}
+                  onClick={handleTakePhoto}
                   disabled={saving}
                 >
-                  <Camera size={17} />
+                  <CameraIcon size={16} />
                   Tomar foto
                 </button>
-              ) : (
-                <label className="primary-button file-primary-button">
-                  <Camera size={17} />
-                  Seleccionar foto
 
-                  <input
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    disabled={saving}
-                    onChange={(event) => {
-                      const file = event.target.files?.[0];
+               
+              </div>
+            )}
+          </div>
 
-                      if (file) {
-                        onWebPhoto(file);
-                      }
-
-                      event.target.value = "";
-                    }}
-                  />
-                </label>
-              )}
-            </div>
+          {hasPhoto && (
+            <button
+              type="button"
+              className="primary-button"
+              onClick={handleTakePhoto}
+              disabled={saving}
+            >
+              <CameraIcon size={16} />
+              Tomar otra foto
+            </button>
           )}
         </div>
 
@@ -115,10 +145,9 @@ export default function EvidenceCaptureModal({
 
           <textarea
             className="textarea-input"
-            rows={4}
             value={comment}
             onChange={(event) => onChangeComment(event.target.value)}
-            placeholder="Ejemplo: área revisada sin novedad, puerta cerrada, pasillo despejado..."
+            placeholder="Describe brevemente la revisión del punto..."
             disabled={saving}
           />
 
@@ -141,9 +170,9 @@ export default function EvidenceCaptureModal({
             type="button"
             className="primary-button"
             onClick={onSave}
-            disabled={!canSave}
+            disabled={saving || !hasPhoto || !comment?.trim()}
           >
-            <Save size={17} />
+            <Save size={16} />
             {saving ? "Guardando..." : "Guardar evidencia"}
           </button>
         </div>

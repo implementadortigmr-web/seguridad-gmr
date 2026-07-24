@@ -26,8 +26,16 @@ export default function SupervisorDashboard() {
     await loadData();
   }
 
-  const registeredPoints = new Map(evidences.map((evidence) => [evidence.puntoId, evidence]));
-  const missing = recorridoDemo.puntos.length - evidences.length;
+  const safeEvidences = Array.isArray(evidences) ? evidences : [];
+const safePoints = Array.isArray(recorridoDemo?.puntos)
+  ? recorridoDemo.puntos
+  : [];
+
+const registeredPoints = new Map(
+  safeEvidences.map((evidence) => [evidence.puntoId, evidence])
+);
+
+const missing = Math.max(safePoints.length - safeEvidences.length, 0);
 
   return (
     <div className="app-page">
@@ -54,11 +62,11 @@ export default function SupervisorDashboard() {
         <section className="stats-grid">
           <div className="stat-card">
             <span>Puntos requeridos</span>
-            <strong>{recorridoDemo.puntos.length}</strong>
+            <strong>{safePoints.length}</strong>
           </div>
           <div className="stat-card success">
             <span>Fotos registradas</span>
-            <strong>{evidences.length}</strong>
+            <strong>{safeEvidences.length}</strong>
           </div>
           <div className="stat-card warning">
             <span>Puntos faltantes</span>
@@ -66,7 +74,7 @@ export default function SupervisorDashboard() {
           </div>
           <div className="stat-card pending">
             <span>Pendientes de sync</span>
-            <strong>{evidences.length}</strong>
+            <strong>{safeEvidences.length}</strong>
           </div>
         </section>
 

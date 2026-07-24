@@ -1,88 +1,89 @@
 export function normalizePoints(points = []) {
-  return points.map((point, index) => {
-    if (typeof point === "string") {
-      return {
-        id: `p${index + 1}`,
-        orden: index + 1,
-        nombre: point,
-      };
-    }
+  if (!Array.isArray(points)) return [];
 
-    return {
-      id: point.id || `p${index + 1}`,
-      orden: point.orden || index + 1,
-      nombre: point.nombre || `Punto ${index + 1}`,
-    };
-  });
+  return points
+    .filter(Boolean)
+    .map((point, index) => {
+      if (typeof point === "string") {
+        return {
+          id: `punto_${index + 1}`,
+          nombre: point,
+          orden: index + 1,
+        };
+      }
+
+      return {
+        id: point.id || point.puntoId || `punto_${index + 1}`,
+        nombre: point.nombre || point.puntoNombre || `Punto ${index + 1}`,
+        orden: Number(point.orden || point.puntoOrden || index + 1),
+        ...point,
+      };
+    })
+    .sort((a, b) => Number(a.orden || 0) - Number(b.orden || 0));
 }
 
-export function sortByName(items) {
+export function sortByName(items = []) {
+  if (!Array.isArray(items)) return [];
+
   return [...items].sort((a, b) =>
-    String(a.nombre || "").localeCompare(String(b.nombre || ""), "es")
+    String(a?.nombre || "").localeCompare(String(b?.nombre || ""))
   );
 }
 
 export function mapSnapshotRoutes(snapshot) {
-  return snapshot.docs.map((document) => ({
-    id: document.id,
-    ...document.data(),
-  }));
+  if (!snapshot?.docs || !Array.isArray(snapshot.docs)) return [];
+
+  return snapshot.docs.map((documento) => {
+    const data = documento.data() || {};
+
+    return {
+      id: documento.id,
+      ...data,
+      nombre: data.nombre || "Recorrido sin nombre",
+      propiedadId: data.propiedadId || "",
+      propiedadNombre: data.propiedadNombre || data.propiedad || "",
+      puntos: normalizePoints(data.puntos || []),
+    };
+  });
 }
 
-export function chunkArray(array, size = 10) {
-  const chunks = [];
+export function groupRoutesByProperty(routes = []) {
+  if (!Array.isArray(routes)) return [];
 
-  for (let index = 0; index < array.length; index += size) {
-    chunks.push(array.slice(index, index + size));
-  }
-
-  return chunks;
-}
-
-export function groupRoutesByProperty(routes) {
-  const map = new Map();
+  const grupos = new Map();
 
   routes.forEach((route) => {
-    const propertyId = route.propiedadId || "sin_propiedad";
-    const propertyName = route.propiedadNombre || propertyId;
+    if (!route) return;
 
-    if (!map.has(propertyId)) {
-      map.set(propertyId, {
-        id: propertyId,
-        nombre: propertyName,
+    const propiedadId = route.propiedadId || "sin_propiedad";
+    const propiedadNombre =
+      route.propiedadNombre || route.propiedad || propiedadId;
+
+    if (!grupos.has(propiedadId)) {
+      grupos.set(propiedadId, {
+        propiedadId,
+        propiedadNombre,
         recorridos: [],
       });
     }
 
-    map.get(propertyId).recorridos.push(route);
+    grupos.get(propiedadId).recorridos.push(route);
   });
 
-  return [...map.values()]
-    .map((property) => ({
-      ...property,
-      recorridos: sortByName(property.recorridos),
-    }))
-    .sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+  return Array.from(grupos.values()).map((grupo) => ({
+    ...grupo,
+    recorridos: sortByName(grupo.recorridos || []),
+  }));
 }
 
-export function getDeviceMessage(status, deviceId) {
-  if (status === "loading") return "Validando dispositivo...";
+export function chunkArray(items = [], size = 2) {
+  if (!Array.isArray(items)) return [];
 
-  if (status === "not_registered") {
-    return `Este celular no está registrado. Solicita al administrador registrarlo con este ID: ${deviceId}`;
+  const chunks = [];
+
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
   }
 
-  if (status === "inactive") {
-    return "Este dispositivo está inactivo. Solicita al administrador activarlo.";
-  }
-
-  if (status === "no_properties") {
-    return "Este dispositivo no tiene propiedades asignadas.";
-  }
-
-  if (status === "no_match") {
-    return "El usuario y el celular no tienen propiedades en común.";
-  }
-
-  return "";
+  return chunks;
 }

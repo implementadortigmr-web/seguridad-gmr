@@ -1,135 +1,273 @@
-import { doc, serverTimestamp, setDoc } from "firebase/firestore";
+import {
+  doc,
+  serverTimestamp,
+  setDoc,
+  Timestamp,
+  writeBatch,
+} from "firebase/firestore";
 import { db } from "./firebase";
 import { subirFotoEvidencia } from "./storageService";
 
-function limpiarTexto(valor = "") {
-  return String(valor || "")
-    .trim()
-    .replace(/[^\w.-]/g, "_")
-    .slice(0, 80);
-}
+const COLLECTION_EJECUCIONES = "ejecucionesRecorridos";
+const COLLECTION_EVIDENCIAS = "evidenciasPuntos";
 
-function limpiarEvidenciaParaFirestore(evidencia, resultadoFoto) {
-  return {
-    ejecucionId: evidencia.ejecucionId,
-    plantillaId: evidencia.plantillaId,
-    plantillaNombre: evidencia.plantillaNombre || "",
-    recorridoId: evidencia.recorridoId || evidencia.plantillaId,
+function convertirFechaParaFirestore(valor) {
+  if (!valor) return null;
 
-    puntoId: evidencia.puntoId,
-    puntoNombre: evidencia.puntoNombre,
-    puntoOrden: evidencia.puntoOrden || 0,
-    comentario: evidencia.comentario || "",
-
-    guardiaId: evidencia.guardiaId,
-    guardiaNombre: evidencia.guardiaNombre || "",
-
-    propiedadId: evidencia.propiedadId,
-    propiedad: evidencia.propiedad || "",
-
-    dispositivoId: evidencia.dispositivoId || "",
-    dispositivoNombre: evidencia.dispositivoNombre || "",
-
-    capturadaEn: evidencia.capturadaEn,
-
-    ubicacionDisponible: evidencia.ubicacionDisponible === true,
-    latitud: evidencia.latitud || null,
-    longitud: evidencia.longitud || null,
-    precisionGps: evidencia.precisionGps || null,
-    errorGps: evidencia.errorGps || "",
-
-    fotoLocal: true,
-    fotoSincronizada: resultadoFoto.fotoSincronizada,
-    fotoUrl: resultadoFoto.fotoUrl,
-    fotoStoragePath: resultadoFoto.fotoStoragePath,
-    fotoThumbUrl: resultadoFoto.fotoThumbUrl || "",
-    fotoThumbStoragePath: resultadoFoto.fotoThumbStoragePath || "",
-    fotoNombre: evidencia.fotoNombre || "",
-    pesoOriginal: evidencia.pesoOriginal || 0,
-    pesoOptimizado: evidencia.pesoOptimizado || 0,
-
-    estado: resultadoFoto.fotoSincronizada
-      ? "sincronizada_con_foto"
-      : "sincronizada_sin_foto",
-
-    sincronizadaEn: serverTimestamp(),
-  };
-}
-
-export async function subirRecorridoConFotos({ ejecucion, evidencias }) {
-  if (!ejecucion?.id) {
-    throw new Error("No se recibió la ejecución local.");
+  if (valor instanceof Date) {
+    return Timestamp.fromDate(valor);
   }
 
-  const evidenciasConFoto = [];
+  if (typeof valor === "string") {
+    const fecha = new Date(valor);
 
-  for (const evidencia of evidencias) {
-    const resultadoFoto = await subirFotoEvidencia({
-      evidencia,
-      ejecucion,
-    });
-
-    evidenciasConFoto.push({
-      evidencia,
-      resultadoFoto,
-    });
+    if (!Number.isNaN(fecha.getTime())) {
+      return Timestamp.fromDate(fecha);
+    }
   }
 
-  const fotosSincronizadas = evidenciasConFoto.every(
-    (item) => item.resultadoFoto.fotoSincronizada
+  if (valor?.seconds !== undefined && valor?.nanoseconds !== undefined) {
+    return valor;
+  }
+
+  return null;
+}
+
+function limpiarObjeto(objeto = {}) {
+  return Object.fromEntries(
+    Object.entries(objeto).filter(([, valor]) => valor !== undefined)
+  );
+}
+
+function quitarFotoLocal(evidencia = {}) {
+  const { foto, ...resto } = evidencia;
+  return resto;
+}
+
+async function procesarConLimite(items, limite, tarea) {
+  const resultados = [];
+  let indiceActual = 0;
+
+  const trabajadores = Array.from(
+    { length: Math.min(limite, items.length) },
+    async () => {
+      while (indiceActual < items.length) {
+        const indice = indiceActual;
+        indiceActual += 1;
+
+        resultados[indice] = await tarea(items[indice], indice);
+      }
+    }
   );
 
-  const ejecucionRef = doc(db, "ejecucionesRecorridos", ejecucion.id);
+  await Promise.all(trabajadores);
 
-  await setDoc(ejecucionRef, {
-    idLocal: ejecucion.id,
+  return resultados;
+}
 
-    plantillaId: ejecucion.plantillaId,
-    plantillaNombre: ejecucion.plantillaNombre || "",
+function obtenerIdEvidencia(evidencia, index) {
+  return (
+    evidencia.id ||
+    `${evidencia.ejecucionId || "ejecucion"}_${evidencia.puntoId || index}`
+  );
+}
 
-    propiedadId: ejecucion.propiedadId,
-    propiedadNombre: ejecucion.propiedadNombre || ejecucion.propiedadId,
+function prepararEjecucion(ejecucion = {}, totalEvidencias = 0) {
+  return limpiarObjeto({
+    ...ejecucion,
 
-    guardiaId: ejecucion.guardiaId,
-    guardiaNombre: ejecucion.guardiaNombre || "",
-
-    dispositivoId: ejecucion.dispositivoId || "",
-    dispositivoNombre: ejecucion.dispositivoNombre || "",
+    iniciadaEn: ejecucion.iniciadaEn || "",
+    finalizadaEn: ejecucion.finalizadaEn || "",
+    creadaEn: ejecucion.creadaEn || ejecucion.iniciadaEn || "",
+    actualizadaEn: serverTimestamp(),
+    sincronizadaEn: serverTimestamp(),
 
     estado: ejecucion.estado || "finalizado",
+    pendienteSync: false,
+    sincronizado: true,
 
-    totalPuntos: ejecucion.totalPuntos || evidencias.length || 0,
-    puntosCompletados: ejecucion.puntosCompletados || evidencias.length || 0,
-    puntosPendientes: ejecucion.puntosPendientes || 0,
+    totalEvidencias,
+    totalFotos: totalEvidencias,
+  });
+}
 
-    iniciadaEn: ejecucion.iniciadaEn,
-    finalizadaEn: ejecucion.finalizadaEn || new Date().toISOString(),
+function prepararEvidencia({
+  evidencia,
+  ejecucion,
+  resultadoFoto,
+  evidenciaId,
+}) {
+  const evidenciaSinFotoLocal = quitarFotoLocal(evidencia);
 
-    fotosSincronizadas,
-    totalFotos: evidenciasConFoto.filter(
-      (item) => item.resultadoFoto.fotoSincronizada
-    ).length,
+  return limpiarObjeto({
+    ...evidenciaSinFotoLocal,
 
-    reporteSincronizado: true,
-    sincronizadoEn: serverTimestamp(),
+    id: evidenciaId,
+    ejecucionId: ejecucion.id,
+    plantillaId: evidencia.plantillaId || ejecucion.plantillaId || "",
+    plantillaNombre: evidencia.plantillaNombre || ejecucion.plantillaNombre || "",
+
+    recorridoId: evidencia.recorridoId || ejecucion.recorridoId || ejecucion.plantillaId || "",
+    recorridoNombre:
+      evidencia.recorridoNombre ||
+      ejecucion.recorridoNombre ||
+      ejecucion.plantillaNombre ||
+      "",
+
+    propiedadId: evidencia.propiedadId || ejecucion.propiedadId || "",
+    propiedadNombre: evidencia.propiedadNombre || ejecucion.propiedadNombre || "",
+
+    guardiaId: evidencia.guardiaId || ejecucion.guardiaId || "",
+    guardiaNombre: evidencia.guardiaNombre || ejecucion.guardiaNombre || "",
+
+    dispositivoId: evidencia.dispositivoId || ejecucion.dispositivoId || "",
+    dispositivoNombre:
+      evidencia.dispositivoNombre || ejecucion.dispositivoNombre || "",
+
+    puntoId: evidencia.puntoId || "",
+    puntoNombre: evidencia.puntoNombre || "",
+    puntoOrden: evidencia.puntoOrden || 0,
+
+    comentario: evidencia.comentario || "",
+    ubicacionDisponible: evidencia.ubicacionDisponible === true,
+    latitud: evidencia.latitud ?? null,
+    longitud: evidencia.longitud ?? null,
+    precisionGps: evidencia.precisionGps ?? null,
+    errorGps: evidencia.errorGps || "",
+
+    capturadaEn: evidencia.capturadaEn || "",
+    creadaEn: evidencia.creadaEn || evidencia.capturadaEn || "",
+    actualizadaEn: serverTimestamp(),
+    sincronizadaEn: serverTimestamp(),
+
+    fotoSincronizada: resultadoFoto.fotoSincronizada === true,
+    fotoUrl: resultadoFoto.fotoUrl || "",
+    fotoStoragePath: resultadoFoto.fotoStoragePath || "",
+    fotoThumbUrl: resultadoFoto.fotoThumbUrl || "",
+    fotoThumbStoragePath: resultadoFoto.fotoThumbStoragePath || "",
+
+    pendienteSync: false,
+    sincronizado: true,
+  });
+}
+
+export async function subirRecorridoConFotos({
+  ejecucion,
+  evidencias = [],
+  onProgress,
+}) {
+  if (!ejecucion?.id) {
+    throw new Error("No hay ejecución para sincronizar.");
+  }
+
+  const evidenciasValidas = Array.isArray(evidencias) ? evidencias : [];
+
+  if (typeof onProgress === "function") {
+    onProgress({
+      actual: 0,
+      total: evidenciasValidas.length,
+      mensaje: "Preparando sincronización...",
+    });
+  }
+
+  const ejecucionRef = doc(db, COLLECTION_EJECUCIONES, ejecucion.id);
+
+  await setDoc(
+    ejecucionRef,
+    prepararEjecucion(ejecucion, evidenciasValidas.length),
+    { merge: true }
+  );
+
+  let evidenciasProcesadas = 0;
+  let fotosSincronizadas = 0;
+
+  const evidenciasPreparadas = await procesarConLimite(
+    evidenciasValidas,
+    2,
+    async (evidencia, index) => {
+      const evidenciaId = obtenerIdEvidencia(evidencia, index);
+
+      if (typeof onProgress === "function") {
+        onProgress({
+          actual: evidenciasProcesadas,
+          total: evidenciasValidas.length,
+          mensaje: `Subiendo fotografía ${evidenciasProcesadas + 1}/${
+            evidenciasValidas.length
+          }...`,
+        });
+      }
+
+      const resultadoFoto = await subirFotoEvidencia({
+        evidencia,
+        ejecucion,
+      });
+
+      if (resultadoFoto.fotoSincronizada) {
+        fotosSincronizadas += 1;
+      }
+
+      const evidenciaFirestore = prepararEvidencia({
+        evidencia,
+        ejecucion,
+        resultadoFoto,
+        evidenciaId,
+      });
+
+      evidenciasProcesadas += 1;
+
+      if (typeof onProgress === "function") {
+        onProgress({
+          actual: evidenciasProcesadas,
+          total: evidenciasValidas.length,
+          mensaje: `Sincronizando ${evidenciasProcesadas}/${evidenciasValidas.length} evidencias...`,
+        });
+      }
+
+      return {
+        id: evidenciaId,
+        data: evidenciaFirestore,
+      };
+    }
+  );
+
+  const batch = writeBatch(db);
+
+  evidenciasPreparadas.forEach((evidenciaPreparada) => {
+    const evidenciaRef = doc(
+      db,
+      COLLECTION_EVIDENCIAS,
+      evidenciaPreparada.id
+    );
+
+    batch.set(evidenciaRef, evidenciaPreparada.data, { merge: true });
   });
 
-  await Promise.all(
-    evidenciasConFoto.map(({ evidencia, resultadoFoto }) => {
-      const evidenciaId = `${ejecucion.id}_${limpiarTexto(evidencia.puntoId)}`;
-
-      return setDoc(
-        doc(db, "evidenciasPuntos", evidenciaId),
-        limpiarEvidenciaParaFirestore(evidencia, resultadoFoto)
-      );
-    })
+  batch.set(
+    ejecucionRef,
+    {
+      pendienteSync: false,
+      sincronizado: true,
+      totalEvidencias: evidenciasValidas.length,
+      totalFotos: fotosSincronizadas,
+      sincronizadaEn: serverTimestamp(),
+      actualizadaEn: serverTimestamp(),
+    },
+    { merge: true }
   );
+
+  await batch.commit();
+
+  if (typeof onProgress === "function") {
+    onProgress({
+      actual: evidenciasValidas.length,
+      total: evidenciasValidas.length,
+      mensaje: "Recorrido sincronizado correctamente.",
+    });
+  }
 
   return {
     ejecucionId: ejecucion.id,
-    totalEvidencias: evidencias.length,
-    totalFotos: evidenciasConFoto.filter(
-      (item) => item.resultadoFoto.fotoSincronizada
-    ).length,
+    totalEvidencias: evidenciasValidas.length,
+    totalFotos: fotosSincronizadas,
   };
 }

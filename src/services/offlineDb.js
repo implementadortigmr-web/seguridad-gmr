@@ -1,141 +1,119 @@
 import Dexie from "dexie";
 
-export const localDb = new Dexie("RondinesSeguridadGMR");
+export const localDb = new Dexie("seguridadGmrLocalDb");
 
 localDb.version(1).stores({
-  evidencias:
-    "++id, [recorridoId+puntoId], recorridoId, puntoId, guardiaId, estado, capturadaEn",
-});
-
-localDb.version(2).stores({
-  evidencias:
-    "++id, [ejecucionId+puntoId], ejecucionId, recorridoId, puntoId, guardiaId, estado, capturadaEn",
   ejecuciones:
-    "id, plantillaId, guardiaId, propiedadId, estado, iniciadaEn, finalizadaEn",
+    "id, guardiaId, plantillaId, recorridoId, propiedadId, estado, pendienteSync, sincronizado, iniciadaEn, finalizadaEn",
+  evidencias:
+    "id, ejecucionId, puntoId, guardiaId, propiedadId, pendienteSync, sincronizado, capturadaEn",
 });
 
-function crearIdEjecucion(plantillaId, guardiaId) {
-  return `local_${plantillaId}_${guardiaId}_${Date.now()}`;
-}
-
-export async function crearEjecucionLocal({ plantilla, guardia }) {
-  const ejecucion = {
-    id: crearIdEjecucion(plantilla.id, guardia.id),
-    plantillaId: plantilla.id,
-    plantillaNombre: plantilla.nombre,
-    propiedadId: plantilla.propiedadId,
-    propiedadNombre: plantilla.propiedadNombre || plantilla.propiedadId,
-    guardiaId: guardia.id,
-    guardiaNombre: guardia.nombre,
-    estado: "en_proceso",
-    totalPuntos: plantilla.totalPuntos || plantilla.puntos?.length || 0,
-    puntosCompletados: 0,
-    iniciadaEn: new Date().toISOString(),
-    finalizadaEn: null,
-    pendienteSync: true,
-  };
-
-  await localDb.ejecuciones.add(ejecucion);
-
-  return ejecucion;
-}
-
-export async function obtenerEjecucionActiva(plantillaId, guardiaId) {
-  const ejecuciones = await localDb.ejecuciones
-    .where("estado")
-    .equals("en_proceso")
-    .toArray();
-
-  return (
-    ejecuciones.find(
-      (item) => item.plantillaId === plantillaId && item.guardiaId === guardiaId
-    ) || null
+function limpiarObjeto(objeto = {}) {
+  return Object.fromEntries(
+    Object.entries(objeto).filter(([, valor]) => valor !== undefined)
   );
 }
 
-export async function finalizarEjecucionLocal(ejecucionId, resumen = {}) {
-  const cambios = {
-    estado: "finalizado",
-    finalizadaEn: new Date().toISOString(),
-    pendienteSync: true,
-    ...resumen,
-  };
+export async function iniciarEjecucionLocal(ejecucion) {
+  if (!ejecucion?.id) {
+    throw new Error("La ejecución no tiene ID.");
+  }
 
-  await localDb.ejecuciones.update(ejecucionId, cambios);
+  const ahora = new Date().toISOString();
 
-  return localDb.ejecuciones.get(ejecucionId);
+  const data = limpiarObjeto({
+    ...ejecucion,
+    estado: ejecucion.estado || "en_proceso",
+    pendienteSync: ejecucion.pendienteSync !== false,
+    sincronizado: ejecucion.sincronizado === true,
+    iniciadaEn: ejecucion.iniciadaEn || ahora,
+    creadaEn: ejecucion.creadaEn || ahora,
+    actualizadaEn: ahora,
+  });
+
+  await localDb.ejecuciones.put(data);
+
+  return data;
+}
+
+export async function finalizarEjecucionLocal(ejecucionId, cambios = {}) {
+  if (!ejecucionId) {
+    throw new Error("No se recibió el ID de la ejecución.");
+  }
+
+  const ejecucionActual = await localDb.ejecuciones.get(ejecucionId);
+
+  if (!ejecucionActual) {
+    throw new Error("No se encontró la ejecución local.");
+  }
+
+  const ahora = new Date().toISOString();
+
+  const ejecucionFinalizada = limpiarObjeto({
+    ...ejecucionActual,
+    ...cambios,
+    estado: cambios.estado || "finalizado",
+    finalizadaEn: cambios.finalizadaEn || ahora,
+    pendienteSync: cambios.pendienteSync !== false,
+    sincronizado: cambios.sincronizado === true,
+    actualizadaEn: ahora,
+  });
+
+  await localDb.ejecuciones.put(ejecucionFinalizada);
+
+  return ejecucionFinalizada;
 }
 
 export async function guardarEvidenciaLocal(evidencia) {
-  const registroExistente = await localDb.evidencias
-    .where("[ejecucionId+puntoId]")
-    .equals([evidencia.ejecucionId, evidencia.puntoId])
-    .first();
-
-  const data = {
-    ...evidencia,
-    estado: evidencia.estado || "pendiente_sync",
-    capturadaEn: evidencia.capturadaEn || new Date().toISOString(),
-    pendienteSync: true,
-  };
-
-  if (registroExistente) {
-    return localDb.evidencias.put({
-      ...data,
-      id: registroExistente.id,
-    });
+  if (!evidencia?.id) {
+    throw new Error("La evidencia no tiene ID.");
   }
 
-  return localDb.evidencias.add(data);
+  if (!evidencia?.ejecucionId) {
+    throw new Error("La evidencia no tiene ejecución.");
+  }
+
+  const ahora = new Date().toISOString();
+
+  const data = limpiarObjeto({
+    ...evidencia,
+    pendienteSync: evidencia.pendienteSync !== false,
+    sincronizado: evidencia.sincronizado === true,
+    capturadaEn: evidencia.capturadaEn || ahora,
+    creadaEn: evidencia.creadaEn || ahora,
+    actualizadaEn: ahora,
+  });
+
+  await localDb.evidencias.put(data);
+
+  return data;
 }
 
 export async function listarEvidencias(ejecucionId) {
   if (!ejecucionId) return [];
 
-  return localDb.evidencias
+  const evidencias = await localDb.evidencias
     .where("ejecucionId")
     .equals(ejecucionId)
     .toArray();
-}
 
-export async function contarEvidenciasPendientes() {
-  return localDb.evidencias
-    .where("estado")
-    .equals("pendiente_sync")
-    .count();
-}
+  return evidencias.sort((a, b) => {
+    const ordenA = Number(a.puntoOrden || 0);
+    const ordenB = Number(b.puntoOrden || 0);
 
-export async function listarEjecucionesPendientes() {
-  return localDb.ejecuciones
-    .where("pendienteSync")
-    .equals(true)
-    .toArray();
-}
+    if (ordenA !== ordenB) return ordenA - ordenB;
 
-export async function limpiarEvidenciasLocal() {
-  await localDb.evidencias.clear();
-  await localDb.ejecuciones.clear();
-}
-
-export async function marcarEjecucionSincronizada(ejecucionId) {
-  return localDb.ejecuciones.update(ejecucionId, {
-    pendienteSync: false,
-    sincronizadaEn: new Date().toISOString(),
+    return String(a.capturadaEn || "").localeCompare(
+      String(b.capturadaEn || "")
+    );
   });
 }
 
-export async function marcarEvidenciasSincronizadas(ejecucionId) {
-  const evidencias = await listarEvidencias(ejecucionId);
+export async function obtenerEjecucionLocal(ejecucionId) {
+  if (!ejecucionId) return null;
 
-  await Promise.all(
-    evidencias.map((evidencia) =>
-      localDb.evidencias.update(evidencia.id, {
-        estado: "sincronizada_con_foto",
-        pendienteSync: false,
-        sincronizadaEn: new Date().toISOString(),
-      })
-    )
-  );
+  return await localDb.ejecuciones.get(ejecucionId);
 }
 
 export async function listarEjecucionesPendientesSync() {
@@ -145,12 +123,117 @@ export async function listarEjecucionesPendientesSync() {
     .filter((ejecucion) => {
       const estaFinalizada = ejecucion.estado === "finalizado";
       const estaPendiente = ejecucion.pendienteSync !== false;
+      const noSincronizada = ejecucion.sincronizado !== true;
 
-      return estaFinalizada && estaPendiente;
+      return estaFinalizada && estaPendiente && noSincronizada;
     })
     .sort((a, b) =>
       String(b.finalizadaEn || b.iniciadaEn || "").localeCompare(
         String(a.finalizadaEn || a.iniciadaEn || "")
       )
     );
+}
+
+export async function marcarEjecucionSincronizada(ejecucionId) {
+  if (!ejecucionId) return;
+
+  const ejecucion = await localDb.ejecuciones.get(ejecucionId);
+
+  if (!ejecucion) return;
+
+  await localDb.ejecuciones.put({
+    ...ejecucion,
+    pendienteSync: false,
+    sincronizado: true,
+    sincronizadaEn: new Date().toISOString(),
+    actualizadaEn: new Date().toISOString(),
+  });
+}
+
+export async function marcarEvidenciasSincronizadas(ejecucionId) {
+  if (!ejecucionId) return;
+
+  const evidencias = await listarEvidencias(ejecucionId);
+  const ahora = new Date().toISOString();
+
+  const evidenciasActualizadas = evidencias.map((evidencia) => ({
+    ...evidencia,
+    pendienteSync: false,
+    sincronizado: true,
+    sincronizadaEn: ahora,
+    actualizadaEn: ahora,
+  }));
+
+  if (evidenciasActualizadas.length > 0) {
+    await localDb.evidencias.bulkPut(evidenciasActualizadas);
+  }
+}
+
+export async function eliminarEjecucionLocal(ejecucionId) {
+  if (!ejecucionId) return;
+
+  await localDb.transaction("rw", localDb.ejecuciones, localDb.evidencias, async () => {
+    await localDb.evidencias.where("ejecucionId").equals(ejecucionId).delete();
+    await localDb.ejecuciones.delete(ejecucionId);
+  });
+}
+
+export async function limpiarRecorridosSincronizados() {
+  const ejecuciones = await localDb.ejecuciones.toArray();
+
+  const sincronizadas = ejecuciones.filter(
+    (ejecucion) =>
+      ejecucion.estado === "finalizado" &&
+      ejecucion.pendienteSync === false &&
+      ejecucion.sincronizado === true
+  );
+
+  for (const ejecucion of sincronizadas) {
+    await eliminarEjecucionLocal(ejecucion.id);
+  }
+
+  return sincronizadas.length;
+}
+
+export async function limpiarEvidenciasLocal(ejecucionId = "") {
+  /*
+    Si recibe ejecucionId, limpia solo las evidencias de ese recorrido.
+    Si no recibe ejecucionId, limpia únicamente evidencias ya sincronizadas.
+    Esto evita borrar recorridos pendientes por error.
+  */
+
+  if (ejecucionId) {
+    const evidencias = await localDb.evidencias
+      .where("ejecucionId")
+      .equals(ejecucionId)
+      .toArray();
+
+    const evidenciasSincronizadas = evidencias.filter(
+      (evidencia) =>
+        evidencia.pendienteSync === false || evidencia.sincronizado === true
+    );
+
+    if (evidenciasSincronizadas.length > 0) {
+      await localDb.evidencias.bulkDelete(
+        evidenciasSincronizadas.map((evidencia) => evidencia.id)
+      );
+    }
+
+    return evidenciasSincronizadas.length;
+  }
+
+  const evidencias = await localDb.evidencias.toArray();
+
+  const evidenciasSincronizadas = evidencias.filter(
+    (evidencia) =>
+      evidencia.pendienteSync === false || evidencia.sincronizado === true
+  );
+
+  if (evidenciasSincronizadas.length > 0) {
+    await localDb.evidencias.bulkDelete(
+      evidenciasSincronizadas.map((evidencia) => evidencia.id)
+    );
+  }
+
+  return evidenciasSincronizadas.length;
 }
