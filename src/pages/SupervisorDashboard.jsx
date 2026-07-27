@@ -1,131 +1,205 @@
-import { useEffect, useState } from "react";
-import { RefreshCw } from "lucide-react";
-import AppHeader from "../components/AppHeader";
-import { recorridoDemo } from "../data/mockData";
-import { limpiarEvidenciasLocal, listarEvidencias } from "../services/offlineDb";
-import { formatDate } from "../utils/formatters";
+import { useEffect, useMemo, useState } from "react";
+import { collection, getDocs } from "firebase/firestore";
+import { LogOut, RefreshCcw } from "lucide-react";
+import { db } from "../services/firebase";
+import ReportesPanel from "./admin/reportes/ReportesPanel";
+import "./supervisor.css";
 
-export default function SupervisorDashboard() {
-  const [evidences, setEvidences] = useState([]);
+function safeArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function normalizarPermisos(profile) {
+  if (!profile) return [];
+
+  if (
+    Array.isArray(profile.propiedadesPermitidas) &&
+    profile.propiedadesPermitidas.length > 0
+  ) {
+    return profile.propiedadesPermitidas.filter(Boolean);
+  }
+
+  if (
+    Array.isArray(profile.propiedadesAsignadas) &&
+    profile.propiedadesAsignadas.length > 0
+  ) {
+    return profile.propiedadesAsignadas.filter(Boolean);
+  }
+
+  if (profile.propiedadId === "todas") return ["*"];
+
+  if (profile.propiedadId && profile.propiedadId !== "todas") {
+    return [profile.propiedadId];
+  }
+
+  return [];
+}
+
+function puedeVerPropiedad(profile, propiedadId) {
+  const permisos = normalizarPermisos(profile);
+
+  if (permisos.includes("*")) return true;
+
+  if (!permisos.length) return true;
+
+  return permisos.includes(propiedadId);
+}
+
+function obtenerNombrePropiedad(propiedadId, propiedadNombre, propiedadesMap) {
+  if (propiedadNombre && propiedadNombre !== propiedadId) {
+    return propiedadNombre;
+  }
+
+  return propiedadesMap.get(propiedadId) || propiedadId || "Sin propiedad";
+}
+
+export default function SupervisorDashboard({ profile, logout }) {
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState("");
+  const [ejecuciones, setEjecuciones] = useState([]);
+  const [evidencias, setEvidencias] = useState([]);
+  const [propiedades, setPropiedades] = useState([]);
+
+  const safeLogout =
+    typeof logout === "function"
+      ? logout
+      : () => {
+          window.location.hash = "#/";
+          window.location.reload();
+        };
+
+  const permisosTexto = useMemo(() => {
+    const permisos = normalizarPermisos(profile);
+
+    if (permisos.includes("*")) return "Todas las propiedades";
+
+    if (!permisos.length) return "Todas las propiedades";
+
+    return `${permisos.length} propiedad(es)`;
+  }, [profile]);
 
   async function loadData() {
-    const records = await listarEvidencias(recorridoDemo.id);
-    setEvidences(records);
+    setLoading(true);
+    setMessage("");
+
+    try {
+      const [propiedadesSnap, ejecucionesSnap, evidenciasSnap] =
+        await Promise.all([
+          getDocs(collection(db, "propiedades")),
+          getDocs(collection(db, "ejecucionesRecorridos")),
+          getDocs(collection(db, "evidenciasPuntos")),
+        ]);
+
+      const propiedadesData = propiedadesSnap.docs.map((documento) => ({
+        id: documento.id,
+        ...documento.data(),
+      }));
+
+      const propiedadesMap = new Map();
+
+      propiedadesData.forEach((propiedad) => {
+        propiedadesMap.set(
+          propiedad.id,
+          propiedad.nombre || propiedad.codigo || propiedad.id
+        );
+      });
+
+      const ejecucionesData = ejecucionesSnap.docs
+        .map((documento) => {
+          const data = documento.data() || {};
+
+          const propiedadNombre = obtenerNombrePropiedad(
+            data.propiedadId,
+            data.propiedadNombre,
+            propiedadesMap
+          );
+
+          return {
+            id: documento.id,
+            ...data,
+            propiedadNombre,
+          };
+        })
+        .filter((ejecucion) =>
+          puedeVerPropiedad(profile, ejecucion.propiedadId)
+        );
+
+      const ejecucionesIds = new Set(ejecucionesData.map((item) => item.id));
+
+      const evidenciasData = evidenciasSnap.docs
+        .map((documento) => ({
+          id: documento.id,
+          ...documento.data(),
+        }))
+        .filter((evidencia) => ejecucionesIds.has(evidencia.ejecucionId));
+
+      setPropiedades(propiedadesData);
+      setEjecuciones(ejecucionesData);
+      setEvidencias(evidenciasData);
+    } catch (error) {
+      console.error("Error cargando supervisión:", error);
+
+      setMessage(
+        error?.code === "permission-denied"
+          ? "No tienes permiso para consultar la información de supervisión."
+          : error?.message || "No fue posible cargar la información."
+      );
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
     loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function resetLocalTest() {
-    const confirmed = window.confirm("¿Deseas borrar las evidencias locales de prueba?");
-    if (!confirmed) return;
-
-    await limpiarEvidenciasLocal();
-    localStorage.removeItem("recorrido-demo-iniciado");
-    await loadData();
-  }
-
-  const safeEvidences = Array.isArray(evidences) ? evidences : [];
-const safePoints = Array.isArray(recorridoDemo?.puntos)
-  ? recorridoDemo.puntos
-  : [];
-
-const registeredPoints = new Map(
-  safeEvidences.map((evidence) => [evidence.puntoId, evidence])
-);
-
-const missing = Math.max(safePoints.length - safeEvidences.length, 0);
-
   return (
-    <div className="app-page">
-      <AppHeader />
+    <main className="supervisor-page">
+      <header className="supervisor-header">
+        <div>
+          <span className="supervisor-kicker">Panel de supervisión</span>
+          <h1>Control de recorridos</h1>
+          <p>
+            {profile?.nombre || profile?.correo || "Supervisor"} ·{" "}
+            {permisosTexto}
+          </p>
+        </div>
 
-      <main className="dashboard-container">
-        <div className="dashboard-top">
-          <div>
-            <p className="eyebrow">Panel de supervisión</p>
-            <h1>Control de recorridos</h1>
-          </div>
-
-          <button className="secondary-button" onClick={loadData}>
-            <RefreshCw size={17} />
+        <div className="supervisor-header-actions">
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={loadData}
+            disabled={loading}
+          >
+            <RefreshCcw size={16} />
             Actualizar
           </button>
-        </div>
 
-        <div className="local-warning">
-          En esta prueba las evidencias se consultan desde este mismo equipo. Cuando conectemos Firebase Storage,
-          el supervisor podrá ver la información enviada desde los celulares de los guardias.
-        </div>
-
-        <section className="stats-grid">
-          <div className="stat-card">
-            <span>Puntos requeridos</span>
-            <strong>{safePoints.length}</strong>
-          </div>
-          <div className="stat-card success">
-            <span>Fotos registradas</span>
-            <strong>{safeEvidences.length}</strong>
-          </div>
-          <div className="stat-card warning">
-            <span>Puntos faltantes</span>
-            <strong>{missing}</strong>
-          </div>
-          <div className="stat-card pending">
-            <span>Pendientes de sync</span>
-            <strong>{safeEvidences.length}</strong>
-          </div>
-        </section>
-
-        <section className="review-card">
-          <div className="review-header">
-            <div>
-              <h2>{recorridoDemo.nombre}</h2>
-              <p>{recorridoDemo.propiedad}</p>
-            </div>
-            <span className={`route-status ${missing === 0 ? "done" : ""}`}>
-              {missing === 0 ? "Completo" : "En proceso"}
-            </span>
-          </div>
-
-          <div className="review-table">
-            <div className="table-head">
-              <span>Punto</span>
-              <span>Fotografía</span>
-              <span>Ubicación</span>
-              <span>Estado</span>
-            </div>
-
-            {recorridoDemo.puntos.map((point) => {
-              const evidence = registeredPoints.get(point.id);
-
-              return (
-                <div className="table-row" key={point.id}>
-                  <span>
-                    {point.orden}. {point.nombre}
-                  </span>
-                  <span>{evidence ? formatDate(evidence.capturadaEn) : "Sin fotografía"}</span>
-                  <span>{evidence?.ubicacionDisponible ? `±${Math.round(evidence.precisionGps)} m` : "—"}</span>
-                  <span>
-                    {evidence ? (
-                      <small className="pill pending">Pendiente de sincronizar</small>
-                    ) : (
-                      <small className="pill missing">Pendiente</small>
-                    )}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-
-        <div className="admin-actions">
-          <button className="danger-button" onClick={resetLocalTest}>
-            Borrar prueba local
+          <button type="button" className="secondary-button" onClick={safeLogout}>
+            <LogOut size={16} />
+            Salir
           </button>
         </div>
-      </main>
-    </div>
+      </header>
+
+      {message && <div className="supervisor-message">{message}</div>}
+
+      {loading ? (
+        <section className="supervisor-loading">
+          <div className="pdf-loading-spinner" />
+          <p>Cargando recorridos...</p>
+        </section>
+      ) : (
+     <div className="supervisor-report-wrapper">
+        <ReportesPanel
+          ejecuciones={safeArray(ejecuciones)}
+          evidencias={safeArray(evidencias)}
+          propiedades={safeArray(propiedades)}
+        />
+      </div>
+      )}
+    </main>
   );
 }

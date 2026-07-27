@@ -23,7 +23,7 @@ import IncidenciasPanel from "./IncidenciasPanel";
 import PlantillasRecorridosPanel from "./PlantillasRecorridosPanel";
 import UsuariosPanel from "./UsuariosPanel";
 import DispositivosPanel from "./DispositivosPanel";
-import ReportesPanel from "./ReportesPanel";
+import ReportesPanel from "./reportes/ReportesPanel";
 
 export default function AdminDashboard() {
   const { profile, logout } = useAuth();

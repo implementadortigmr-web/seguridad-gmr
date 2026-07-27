@@ -5,48 +5,85 @@ import {
   Clock3,
   Eye,
   Filter,
-  ImageOff,
   MapPin,
   RotateCcw,
   User,
   FileText,
   X,
 } from "lucide-react";
-import CatalogTable from "../../components/CatalogTable";
-import { formatDate } from "../../utils/formatters";
-import { generarPdfRecorrido } from "../../services/pdfReportService";
+import CatalogTable from "../../../components/CatalogTable";
+import { formatDate } from "../../../utils/formatters";
+import { generarPdfRecorrido } from "../../../services/pdfReportService";
 
-function obtenerNombrePropiedad(ejecucion) {
-  return (
-    ejecucion.propiedadNombre ||
-    ejecucion.propiedad ||
-    ejecucion.propiedadId ||
-    "Sin propiedad"
-  );
+function safeArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function normalizarTexto(texto = "") {
+  return String(texto || "").trim().toLowerCase();
+}
+
+function obtenerNombrePropiedad(ejecucion, propiedadesMap = new Map()) {
+  if (!ejecucion) return "Sin propiedad";
+
+  const propiedadId = ejecucion.propiedadId || "";
+
+  if (
+    ejecucion.propiedadNombre &&
+    ejecucion.propiedadNombre !== propiedadId
+  ) {
+    return ejecucion.propiedadNombre;
+  }
+
+  if (ejecucion.propiedad && ejecucion.propiedad !== propiedadId) {
+    return ejecucion.propiedad;
+  }
+
+  return propiedadesMap.get(propiedadId) || propiedadId || "Sin propiedad";
 }
 
 function obtenerIdPropiedad(ejecucion) {
-  return ejecucion.propiedadId || obtenerNombrePropiedad(ejecucion);
+  return ejecucion?.propiedadId || ejecucion?.propiedad || "sin_propiedad";
 }
 
 function obtenerFechaReporte(ejecucion) {
-  return ejecucion.finalizadaEn || ejecucion.iniciadaEn || "";
+  return ejecucion?.finalizadaEn || ejecucion?.iniciadaEn || "";
 }
 
 function convertirAFecha(valor) {
   if (!valor) return null;
 
+  if (valor instanceof Date) {
+    return Number.isNaN(valor.getTime()) ? null : valor;
+  }
+
   if (typeof valor?.toDate === "function") {
-    return valor.toDate();
+    const fecha = valor.toDate();
+    return Number.isNaN(fecha.getTime()) ? null : fecha;
   }
 
-  const fecha = new Date(valor);
-
-  if (Number.isNaN(fecha.getTime())) {
-    return null;
+  if (typeof valor === "object" && typeof valor.seconds === "number") {
+    const fecha = new Date(valor.seconds * 1000);
+    return Number.isNaN(fecha.getTime()) ? null : fecha;
   }
 
-  return fecha;
+  if (typeof valor === "number") {
+    const fecha = new Date(valor);
+    return Number.isNaN(fecha.getTime()) ? null : fecha;
+  }
+
+  if (typeof valor === "string") {
+    const limpio = valor.trim();
+
+    if (!limpio || limpio.toLowerCase() === "invalid date") {
+      return null;
+    }
+
+    const fecha = new Date(limpio);
+    return Number.isNaN(fecha.getTime()) ? null : fecha;
+  }
+
+  return null;
 }
 
 function obtenerTimestamp(valor) {
@@ -58,7 +95,6 @@ function crearFechaInicio(fechaTexto) {
   if (!fechaTexto) return null;
 
   const fecha = new Date(`${fechaTexto}T00:00:00`);
-
   return Number.isNaN(fecha.getTime()) ? null : fecha;
 }
 
@@ -66,7 +102,6 @@ function crearFechaFin(fechaTexto) {
   if (!fechaTexto) return null;
 
   const fecha = new Date(`${fechaTexto}T23:59:59`);
-
   return Number.isNaN(fecha.getTime()) ? null : fecha;
 }
 
@@ -88,22 +123,41 @@ function calcularDuracion(inicio, cierre) {
   const horas = Math.floor(totalMinutos / 60);
   const minutos = totalMinutos % 60;
 
-  if (horas > 0 && minutos > 0) {
-    return `${horas} h ${minutos} min`;
-  }
-
-  if (horas > 0) {
-    return `${horas} h`;
-  }
+  if (horas > 0 && minutos > 0) return `${horas} h ${minutos} min`;
+  if (horas > 0) return `${horas} h`;
 
   return `${minutos} min`;
 }
 
-function normalizarTexto(texto = "") {
-  return String(texto).trim().toLowerCase();
+function obtenerTotalPuntos(ejecucion, evidenciasCount = 0) {
+  return Number(
+    ejecucion?.puntosTotales ||
+      ejecucion?.totalPuntos ||
+      ejecucion?.puntosCompletados ||
+      evidenciasCount ||
+      0
+  );
 }
 
-export default function ReportesPanel({ ejecuciones, evidencias }) {
+function tieneUbicacion(evidencia) {
+  return (
+    evidencia?.ubicacionDisponible &&
+    evidencia?.latitud !== undefined &&
+    evidencia?.latitud !== null &&
+    evidencia?.longitud !== undefined &&
+    evidencia?.longitud !== null
+  );
+}
+
+function tieneFoto(evidencia) {
+  return Boolean(evidencia?.fotoThumbUrl || evidencia?.fotoUrl);
+}
+
+export default function ReportesPanel({
+  ejecuciones = [],
+  evidencias = [],
+  propiedades = [],
+}) {
   const [selectedPropertyId, setSelectedPropertyId] = useState("todas");
   const [selectedGuardiaId, setSelectedGuardiaId] = useState("todos");
   const [fechaInicio, setFechaInicio] = useState("");
@@ -113,17 +167,40 @@ export default function ReportesPanel({ ejecuciones, evidencias }) {
   const [photoLoading, setPhotoLoading] = useState(false);
   const [generatingPdf, setGeneratingPdf] = useState(false);
 
+  const ejecucionesSafe = safeArray(ejecuciones);
+  const evidenciasSafe = safeArray(evidencias);
+  const propiedadesSafe = safeArray(propiedades);
 
+  const propiedadesMap = useMemo(() => {
+    const map = new Map();
 
+    propiedadesSafe.forEach((propiedad) => {
+      if (!propiedad?.id) return;
 
+      map.set(
+        propiedad.id,
+        propiedad.nombre || propiedad.codigo || propiedad.id
+      );
+    });
 
+    return map;
+  }, [propiedadesSafe]);
 
   const propiedadesDisponibles = useMemo(() => {
     const map = new Map();
 
-    ejecuciones.forEach((ejecucion) => {
+    propiedadesSafe.forEach((propiedad) => {
+      if (!propiedad?.id) return;
+
+      map.set(propiedad.id, {
+        id: propiedad.id,
+        nombre: propiedad.nombre || propiedad.codigo || propiedad.id,
+      });
+    });
+
+    ejecucionesSafe.forEach((ejecucion) => {
       const propiedadId = obtenerIdPropiedad(ejecucion);
-      const propiedadNombre = obtenerNombrePropiedad(ejecucion);
+      const propiedadNombre = obtenerNombrePropiedad(ejecucion, propiedadesMap);
 
       if (propiedadId) {
         map.set(propiedadId, {
@@ -134,14 +211,14 @@ export default function ReportesPanel({ ejecuciones, evidencias }) {
     });
 
     return [...map.values()].sort((a, b) =>
-      a.nombre.localeCompare(b.nombre, "es")
+      String(a.nombre || "").localeCompare(String(b.nombre || ""), "es")
     );
-  }, [ejecuciones]);
+  }, [ejecucionesSafe, propiedadesSafe, propiedadesMap]);
 
   const guardiasDisponibles = useMemo(() => {
     const map = new Map();
 
-    ejecuciones.forEach((ejecucion) => {
+    ejecucionesSafe.forEach((ejecucion) => {
       const guardiaId =
         ejecucion.guardiaId || normalizarTexto(ejecucion.guardiaNombre);
 
@@ -154,15 +231,15 @@ export default function ReportesPanel({ ejecuciones, evidencias }) {
     });
 
     return [...map.values()].sort((a, b) =>
-      a.nombre.localeCompare(b.nombre, "es")
+      String(a.nombre || "").localeCompare(String(b.nombre || ""), "es")
     );
-  }, [ejecuciones]);
+  }, [ejecucionesSafe]);
 
   const ejecucionesFiltradas = useMemo(() => {
     const inicioFiltro = crearFechaInicio(fechaInicio);
     const finFiltro = crearFechaFin(fechaFin);
 
-    const base = ejecuciones.filter((ejecucion) => {
+    const base = ejecucionesSafe.filter((ejecucion) => {
       const propiedadCoincide =
         selectedPropertyId === "todas" ||
         obtenerIdPropiedad(ejecucion) === selectedPropertyId;
@@ -195,7 +272,7 @@ export default function ReportesPanel({ ejecuciones, evidencias }) {
         obtenerTimestamp(obtenerFechaReporte(a))
     );
   }, [
-    ejecuciones,
+    ejecucionesSafe,
     selectedPropertyId,
     selectedGuardiaId,
     fechaInicio,
@@ -205,7 +282,9 @@ export default function ReportesPanel({ ejecuciones, evidencias }) {
   const evidenciasPorEjecucion = useMemo(() => {
     const map = new Map();
 
-    evidencias.forEach((evidencia) => {
+    evidenciasSafe.forEach((evidencia) => {
+      if (!evidencia?.ejecucionId) return;
+
       if (!map.has(evidencia.ejecucionId)) {
         map.set(evidencia.ejecucionId, []);
       }
@@ -213,35 +292,53 @@ export default function ReportesPanel({ ejecuciones, evidencias }) {
       map.get(evidencia.ejecucionId).push(evidencia);
     });
 
+    map.forEach((items) => {
+      items.sort(
+        (a, b) => Number(a?.puntoOrden || 0) - Number(b?.puntoOrden || 0)
+      );
+    });
+
     return map;
-  }, [evidencias]);
+  }, [evidenciasSafe]);
 
-  
-const ejecucionesSeguras = Array.isArray(ejecucionesFiltradas)
-  ? ejecucionesFiltradas
-  : [];
+  const ejecucionesSeguras = Array.isArray(ejecucionesFiltradas)
+    ? ejecucionesFiltradas
+    : [];
 
-const selectedExecution =
-  ejecucionesSeguras.find((item) => item.id === selectedExecutionId) || null;
+  const selectedExecution =
+    ejecucionesSeguras.find((item) => item.id === selectedExecutionId) ||
+    ejecucionesSeguras[0] ||
+    null;
 
-const selectedEvidence = selectedExecution
-  ? evidenciasPorEjecucion.get(selectedExecution.id) || []
-  : [];
+  const selectedEvidence = selectedExecution
+    ? evidenciasPorEjecucion.get(selectedExecution.id) || []
+    : [];
 
-useEffect(() => {
-  if (!ejecucionesSeguras.length) {
-    setSelectedExecutionId("");
-    return;
-  }
+  const selectedEvidenceSafe = Array.isArray(selectedEvidence)
+    ? selectedEvidence
+    : [];
 
-  const existeSeleccion = ejecucionesSeguras.some(
-    (ejecucion) => ejecucion.id === selectedExecutionId
+  const puntosCapturadosSeleccionado = selectedEvidenceSafe.length;
+
+  const totalPuntosSeleccionado = obtenerTotalPuntos(
+    selectedExecution,
+    puntosCapturadosSeleccionado
   );
 
-  if (!existeSeleccion) {
-    setSelectedExecutionId(ejecucionesSeguras[0].id);
-  }
-}, [ejecucionesSeguras, selectedExecutionId]);
+  useEffect(() => {
+    if (!ejecucionesSeguras.length) {
+      setSelectedExecutionId("");
+      return;
+    }
+
+    const existeSeleccion = ejecucionesSeguras.some(
+      (ejecucion) => ejecucion.id === selectedExecutionId
+    );
+
+    if (!existeSeleccion) {
+      setSelectedExecutionId(ejecucionesSeguras[0].id);
+    }
+  }, [ejecucionesSeguras, selectedExecutionId]);
 
   function limpiarFiltros() {
     setSelectedPropertyId("todas");
@@ -251,56 +348,53 @@ useEffect(() => {
     setSelectedExecutionId("");
   }
 
- function abrirFoto(evidencia) {
-  if (!evidencia.fotoUrl) return;
+  function abrirFoto(evidencia) {
+    const fotoPrincipal = evidencia?.fotoUrl || evidencia?.fotoThumbUrl;
 
-  setPhotoLoading(true);
+    if (!fotoPrincipal) return;
 
-  const tieneGps =
-    evidencia.ubicacionDisponible &&
-    evidencia.latitud !== null &&
-    evidencia.longitud !== null &&
-    evidencia.latitud !== undefined &&
-    evidencia.longitud !== undefined;
+    setPhotoLoading(true);
 
-setSelectedPhoto({
-  url: evidencia.fotoUrl,
-  previewUrl: evidencia.fotoThumbUrl || evidencia.fotoUrl,
-  punto: evidencia.puntoNombre,
-  fecha: evidencia.capturadaEn,
-  comentario: evidencia.comentario || "Sin comentario",
-  tieneGps,
-  latitud: tieneGps ? Number(evidencia.latitud) : null,
-  longitud: tieneGps ? Number(evidencia.longitud) : null,
-  gps: tieneGps
-    ? `${Number(evidencia.latitud).toFixed(6)}, ${Number(
-        evidencia.longitud
-      ).toFixed(6)}`
-    : "GPS no disponible",
-});
-}
+    const gpsDisponible = tieneUbicacion(evidencia);
 
-async function handleGeneratePdf() {
-  if (!selectedExecution) return;
-
-  setGeneratingPdf(true);
-
-  try {
-    await generarPdfRecorrido({
-      ejecucion: selectedExecution,
-      evidencias: selectedEvidence,
+    setSelectedPhoto({
+      url: fotoPrincipal,
+      previewUrl: evidencia.fotoThumbUrl || fotoPrincipal,
+      punto: evidencia.puntoNombre || evidencia.puntoId || "Punto",
+      fecha: evidencia.capturadaEn || evidencia.creadaEn,
+      comentario: evidencia.comentario || "Sin comentario",
+      tieneGps: gpsDisponible,
+      latitud: gpsDisponible ? Number(evidencia.latitud) : null,
+      longitud: gpsDisponible ? Number(evidencia.longitud) : null,
+      gps: gpsDisponible
+        ? `${Number(evidencia.latitud).toFixed(6)}, ${Number(
+            evidencia.longitud
+          ).toFixed(6)}`
+        : "GPS no disponible",
     });
-  } catch (error) {
-    console.error("Error generando PDF:", error);
-    alert(
-      `No fue posible generar el PDF. ${
-        error?.message || "Intenta nuevamente."
-      }`
-    );
-  } finally {
-    setGeneratingPdf(false);
   }
-}
+
+  async function handleGeneratePdf() {
+    if (!selectedExecution) return;
+
+    setGeneratingPdf(true);
+
+    try {
+      await generarPdfRecorrido({
+        ejecucion: selectedExecution,
+        evidencias: selectedEvidenceSafe,
+      });
+    } catch (error) {
+      console.error("Error generando PDF:", error);
+      alert(
+        `No fue posible generar el PDF. ${
+          error?.message || "Intenta nuevamente."
+        }`
+      );
+    } finally {
+      setGeneratingPdf(false);
+    }
+  }
 
   return (
     <section>
@@ -405,9 +499,15 @@ async function handleGeneratePdf() {
         <div className="reports-list">
           {ejecucionesSeguras.length ? (
             ejecucionesSeguras.map((ejecucion) => {
-              const activa = selectedExecutionId === ejecucion.id;
+              const activa = selectedExecution?.id === ejecucion.id;
+
               const evidenciasCount =
                 evidenciasPorEjecucion.get(ejecucion.id)?.length || 0;
+
+              const totalPuntosCard = obtenerTotalPuntos(
+                ejecucion,
+                evidenciasCount
+              );
 
               const duracion = calcularDuracion(
                 ejecucion.iniciadaEn,
@@ -422,16 +522,26 @@ async function handleGeneratePdf() {
                   onClick={() => setSelectedExecutionId(ejecucion.id)}
                 >
                   <div>
-                    <strong>{ejecucion.plantillaNombre}</strong>
-                    <span>{obtenerNombrePropiedad(ejecucion)}</span>
-                    <small>{ejecucion.guardiaNombre}</small>
+                    <strong>
+                      {ejecucion.plantillaNombre ||
+                        ejecucion.recorridoNombre ||
+                        "Recorrido"}
+                    </strong>
+
+                    <span>{obtenerNombrePropiedad(ejecucion, propiedadesMap)}</span>
+
+                    <small>{ejecucion.guardiaNombre || "Sin guardia"}</small>
                   </div>
 
                   <div className="report-card-meta">
                     <span>
-                      {evidenciasCount}/{ejecucion.totalPuntos || 0} puntos
+                      {evidenciasCount}/{totalPuntosCard} puntos
                     </span>
-                    <small>{formatDate(ejecucion.finalizadaEn)}</small>
+
+                    <small>
+                      {formatDate(ejecucion.finalizadaEn || ejecucion.iniciadaEn)}
+                    </small>
+
                     <small className="duration-small">{duracion}</small>
                   </div>
                 </button>
@@ -450,14 +560,20 @@ async function handleGeneratePdf() {
               <div className="report-detail-header">
                 <div>
                   <p className="eyebrow">Detalle del recorrido</p>
-                  <h3>{selectedExecution.plantillaNombre}</h3>
+
+                  <h3>
+                    {selectedExecution.plantillaNombre ||
+                      selectedExecution.recorridoNombre ||
+                      "Recorrido"}
+                  </h3>
+
                   <p className="muted">
-                    {obtenerNombrePropiedad(selectedExecution)}
+                    {obtenerNombrePropiedad(selectedExecution, propiedadesMap)}
                   </p>
                 </div>
 
                 <div className="report-detail-actions">
-                 <button
+                  <button
                     type="button"
                     className="secondary-button"
                     onClick={handleGeneratePdf}
@@ -469,7 +585,7 @@ async function handleGeneratePdf() {
 
                   <span className="admin-role-badge">
                     <ClipboardCheck size={16} />
-                    {selectedExecution.estado}
+                    {selectedExecution.estado || "finalizado"}
                   </span>
                 </div>
               </div>
@@ -477,7 +593,7 @@ async function handleGeneratePdf() {
               <div className="report-summary report-summary-clean">
                 <div>
                   <strong>Guardia</strong>
-                  <span>{selectedExecution.guardiaNombre}</span>
+                  <span>{selectedExecution.guardiaNombre || "Sin guardia"}</span>
                 </div>
 
                 <div>
@@ -509,22 +625,37 @@ async function handleGeneratePdf() {
                 <div>
                   <strong>Puntos</strong>
                   <span>
-                    {selectedExecution.puntosCompletados}/
-                    {selectedExecution.totalPuntos}
+                    {puntosCapturadosSeleccionado}/{totalPuntosSeleccionado}
                   </span>
                 </div>
               </div>
 
               <CatalogTable
-               columns={["Punto", "Comentario", "Hora", "GPS", "Foto"]}
-                rows={selectedEvidence
-                  .sort((a, b) => (a.puntoOrden || 0) - (b.puntoOrden || 0))
-                  .map((evidencia) => 
-                    [
-                      `${evidencia.puntoOrden}. ${evidencia.puntoNombre}`,
-                      evidencia.comentario || "Sin comentario",
-                      formatDate(evidencia.capturadaEn),
-                      evidencia.ubicacionDisponible ? (
+                columns={["Punto", "Comentario", "Hora", "GPS", "Foto"]}
+                rows={[...selectedEvidenceSafe]
+                  .sort(
+                    (a, b) =>
+                      Number(a?.puntoOrden || 0) -
+                      Number(b?.puntoOrden || 0)
+                  )
+                  .map((evidencia, index) => {
+                    const puntoOrden = Number(
+                      evidencia?.puntoOrden || index + 1
+                    );
+
+                    const puntoNombre =
+                      evidencia?.puntoNombre ||
+                      evidencia?.puntoId ||
+                      `Punto ${puntoOrden}`;
+
+                    const gpsDisponible = tieneUbicacion(evidencia);
+                    const fotoDisponible = tieneFoto(evidencia);
+
+                    return [
+                      `${puntoOrden}. ${puntoNombre}`,
+                      evidencia?.comentario || "Sin comentario",
+                      formatDate(evidencia?.capturadaEn || evidencia?.creadaEn),
+                      gpsDisponible ? (
                         <span className="gps-inline">
                           <MapPin size={14} />
                           {Number(evidencia.latitud).toFixed(5)},{" "}
@@ -533,22 +664,20 @@ async function handleGeneratePdf() {
                       ) : (
                         "No disponible"
                       ),
-                      evidencia.fotoUrl ? (
+                      fotoDisponible ? (
                         <button
-                          className="mini-button photo-view-button"
                           type="button"
+                          className="mini-button"
                           onClick={() => abrirFoto(evidencia)}
                         >
                           <Eye size={14} />
                           Ver foto
                         </button>
                       ) : (
-                        <span className="no-photo-label">
-                          <ImageOff size={14} />
-                          Sin foto
-                        </span>
+                        "Sin foto"
                       ),
-                    ])}
+                    ];
+                  })}
               />
             </>
           ) : (
@@ -574,55 +703,55 @@ async function handleGeneratePdf() {
               </button>
             </div>
 
-           <div className="photo-modal-content">
+            <div className="photo-modal-content">
               <div className="photo-preview-box">
-              <div className="photo-image-loader">
-              {photoLoading && (
-                <div className="photo-loading-box">
-                  Cargando fotografía...
+                <div className="photo-image-loader">
+                  {photoLoading && (
+                    <div className="photo-loading-box">
+                      Cargando fotografía...
+                    </div>
+                  )}
+
+                  <img
+                    src={selectedPhoto.previewUrl || selectedPhoto.url}
+                    alt={selectedPhoto.punto}
+                    loading="lazy"
+                    onLoad={() => setPhotoLoading(false)}
+                    onError={() => setPhotoLoading(false)}
+                  />
                 </div>
-              )}
+              </div>
 
-              <img
-                src={selectedPhoto.previewUrl || selectedPhoto.url}
-                alt={selectedPhoto.punto}
-                loading="lazy"
-                onLoad={() => setPhotoLoading(false)}
-                onError={() => setPhotoLoading(false)}
-              />
-            </div>
-  </div>
+              <div className="photo-info-box">
+                <div>
+                  <strong>Comentario</strong>
+                  <span>{selectedPhoto.comentario}</span>
+                </div>
 
-  <div className="photo-info-box">
-    <div>
-      <strong>Comentario</strong>
-      <span>{selectedPhoto.comentario}</span>
-    </div>
+                <div>
+                  <strong>Ubicación</strong>
+                  <span>
+                    <MapPin size={14} />
+                    {selectedPhoto.gps}
+                  </span>
+                </div>
 
-    <div>
-      <strong>Ubicación</strong>
-      <span>
-        <MapPin size={14} />
-        {selectedPhoto.gps}
-      </span>
-    </div>
+                {selectedPhoto.tieneGps ? (
+                  <>
+                    <div className="photo-map-box">
+                      <iframe
+                        title={`Mapa ${selectedPhoto.punto}`}
+                        src={`https://maps.google.com/maps?q=${selectedPhoto.latitud},${selectedPhoto.longitud}&z=18&output=embed`}
+                        loading="lazy"
+                        referrerPolicy="no-referrer-when-downgrade"
+                      />
+                    </div>
 
-    {selectedPhoto.tieneGps ? (
-      <>
-        <div className="photo-map-box">
-          <iframe
-            title={`Mapa ${selectedPhoto.punto}`}
-            src={`https://maps.google.com/maps?q=${selectedPhoto.latitud},${selectedPhoto.longitud}&z=18&output=embed`}
-            loading="lazy"
-            referrerPolicy="no-referrer-when-downgrade"
-          />
-        </div>
-
-                <a
-                  className="map-open-link"
-                  href={`https://www.google.com/maps?q=${selectedPhoto.latitud},${selectedPhoto.longitud}`}
-                  target="_blank"
-                  rel="noreferrer"
+                    <a
+                      className="map-open-link"
+                      href={`https://www.google.com/maps?q=${selectedPhoto.latitud},${selectedPhoto.longitud}`}
+                      target="_blank"
+                      rel="noreferrer"
                     >
                       Abrir ubicación en Google Maps
                     </a>
@@ -635,8 +764,6 @@ async function handleGeneratePdf() {
               </div>
             </div>
 
-           
-
             <div className="photo-modal-footer">
               <a href={selectedPhoto.url} target="_blank" rel="noreferrer">
                 Abrir foto en pestaña nueva
@@ -646,22 +773,22 @@ async function handleGeneratePdf() {
         </div>
       )}
 
- {generatingPdf && (
-              <div className="pdf-loading-overlay">
-                <div className="pdf-loading-modal">
-                  <div className="pdf-loading-spinner" />
+      {generatingPdf && (
+        <div className="pdf-loading-overlay">
+          <div className="pdf-loading-modal">
+            <div className="pdf-loading-spinner" />
 
-                  <h3>Generando PDF</h3>
+            <h3>Generando PDF</h3>
 
-                  <p>
-                    Estamos preparando el reporte con fotografías, comentarios y ubicación.
-                    Esto puede tardar unos segundos.
-                  </p>
+            <p>
+              Estamos preparando el reporte con fotografías, comentarios y
+              ubicación. Esto puede tardar unos segundos.
+            </p>
 
-                  <span>No cierres esta ventana.</span>
-                </div>
-              </div>
-            )}
+            <span>No cierres esta ventana.</span>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
