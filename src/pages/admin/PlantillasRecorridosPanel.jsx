@@ -1,8 +1,9 @@
-import { useState } from "react";
-import { Edit3, Save, X } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Edit3, Save, Trash2, X } from "lucide-react";
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   serverTimestamp,
   updateDoc,
@@ -10,6 +11,7 @@ import {
 
 import CatalogTable from "../../components/CatalogTable";
 import { db } from "../../services/firebase";
+import { useFeedback } from "../../context/FeedbackContext";
 
 const INITIAL_FORM = {
   nombre: "",
@@ -18,24 +20,45 @@ const INITIAL_FORM = {
   activo: true,
 };
 
+function safeArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
 export default function PlantillasRecorridosPanel({
   userId,
-  plantillas,
-  propiedades,
+  plantillas = [],
+  propiedades = [],
   setMessage,
 }) {
   const [form, setForm] = useState(INITIAL_FORM);
   const [guardando, setGuardando] = useState(false);
   const [editingId, setEditingId] = useState(null);
+  const [deletingId, setDeletingId] = useState("");
+  const feedback = useFeedback();
 
   const isEditing = Boolean(editingId);
 
-  const propiedadesActivas = propiedades.filter(
+  const propiedadesSafe = safeArray(propiedades);
+  const plantillasSafe = safeArray(plantillas);
+
+  const propiedadesActivas = propiedadesSafe.filter(
     (propiedad) => propiedad.activo === true
   );
 
+  const recorridosActivos = useMemo(() => {
+    return plantillasSafe
+      .filter((plantilla) => plantilla.activo !== false)
+      .sort((a, b) => String(a.nombre || "").localeCompare(String(b.nombre || ""), "es"));
+  }, [plantillasSafe]);
+
+  const recorridosInactivos = useMemo(() => {
+    return plantillasSafe
+      .filter((plantilla) => plantilla.activo === false)
+      .sort((a, b) => String(a.nombre || "").localeCompare(String(b.nombre || ""), "es"));
+  }, [plantillasSafe]);
+
   function getPropertyName(propiedadId) {
-    const propiedad = propiedades.find((item) => item.id === propiedadId);
+    const propiedad = propiedadesSafe.find((item) => item.id === propiedadId);
     return propiedad?.nombre || propiedadId || "Sin propiedad";
   }
 
@@ -46,7 +69,7 @@ export default function PlantillasRecorridosPanel({
   }
 
   function normalizarPuntosParaTexto(puntos = []) {
-    return puntos
+    return safeArray(puntos)
       .map((punto) => {
         if (typeof punto === "string") return punto;
         return punto?.nombre || "";
@@ -149,6 +172,84 @@ export default function PlantillasRecorridosPanel({
       console.error("Error actualizando recorrido:", error);
       setMessage("No fue posible actualizar el recorrido.");
     }
+  }
+
+  async function eliminarRecorrido(plantilla) {
+    if (plantilla.activo !== false) {
+      setMessage("Solo se pueden eliminar recorridos inactivos.");
+      return;
+    }
+
+    const confirmar = await feedback.confirm({
+      title: "Eliminar recorrido",
+      message: `¿Seguro que deseas eliminar el recorrido "${plantilla.nombre}"? Esta acción no se puede deshacer.`,
+      confirmText: "Eliminar",
+      cancelText: "Cancelar",
+      type: "danger",
+    });
+
+    if (!confirmar) return;
+
+    setDeletingId(plantilla.id);
+    setMessage("");
+
+    try {
+      await deleteDoc(doc(db, "plantillasRecorridos", plantilla.id));
+
+      if (editingId === plantilla.id) {
+        limpiarFormulario();
+      }
+
+      setMessage("Recorrido eliminado correctamente.");
+    } catch (error) {
+      console.error("Error eliminando recorrido:", error);
+      setMessage(
+        error?.code === "permission-denied"
+          ? "No tienes permisos para eliminar recorridos."
+          : "No fue posible eliminar el recorrido."
+      );
+    } finally {
+      setDeletingId("");
+    }
+  }
+
+  function crearFilasTabla(lista, mostrarEliminar = false) {
+    return safeArray(lista).map((plantilla) => [
+      plantilla.nombre,
+      getPropertyName(plantilla.propiedadId),
+      plantilla.totalPuntos || plantilla.puntos?.length || 0,
+      plantilla.activo ? "Activo" : "Inactivo",
+      <div className="table-actions">
+        <button
+          className="mini-button"
+          type="button"
+          onClick={() => iniciarEdicion(plantilla)}
+        >
+          <Edit3 size={14} />
+          Editar
+        </button>
+
+        <button
+          className="mini-button"
+          type="button"
+          onClick={() => cambiarActivo(plantilla)}
+        >
+          {plantilla.activo ? "Desactivar" : "Activar"}
+        </button>
+
+        {mostrarEliminar && (
+          <button
+            className="mini-button danger-mini-button"
+            type="button"
+            onClick={() => eliminarRecorrido(plantilla)}
+            disabled={deletingId === plantilla.id}
+          >
+            <Trash2 size={14} />
+            {deletingId === plantilla.id ? "Eliminando..." : "Eliminar"}
+          </button>
+        )}
+      </div>,
+    ]);
   }
 
   return (
@@ -261,39 +362,62 @@ export default function PlantillasRecorridosPanel({
         </div>
       </form>
 
-      <CatalogTable
-        columns={[
-          "Recorrido",
-          "Propiedad",
-          "Puntos",
-          "Estado",
-          "Acciones",
-        ]}
-        rows={plantillas.map((plantilla) => [
-          plantilla.nombre,
-          getPropertyName(plantilla.propiedadId),
-          plantilla.totalPuntos || plantilla.puntos?.length || 0,
-          plantilla.activo ? "Activo" : "Inactivo",
-          <div className="table-actions">
-            <button
-              className="mini-button"
-              type="button"
-              onClick={() => iniciarEdicion(plantilla)}
-            >
-              <Edit3 size={14} />
-              Editar
-            </button>
+      <div className="routes-status-summary">
+        <article>
+          <span>Activos</span>
+          <strong>{recorridosActivos.length}</strong>
+        </article>
 
-            <button
-              className="mini-button"
-              type="button"
-              onClick={() => cambiarActivo(plantilla)}
-            >
-              {plantilla.activo ? "Desactivar" : "Activar"}
-            </button>
-          </div>,
-        ])}
-      />
+        <article>
+          <span>Inactivos</span>
+          <strong>{recorridosInactivos.length}</strong>
+        </article>
+      </div>
+
+      <section className="route-table-section">
+        <div className="route-table-section-header">
+          <div>
+            <h3>Recorridos activos</h3>
+            <p>
+              Estos son los recorridos que puede ver el guardia en la aplicación.
+            </p>
+          </div>
+        </div>
+
+        <CatalogTable
+          columns={[
+            "Recorrido",
+            "Propiedad",
+            "Puntos",
+            "Estado",
+            "Acciones",
+          ]}
+          rows={crearFilasTabla(recorridosActivos, false)}
+        />
+      </section>
+
+      <section className="route-table-section route-table-section-muted">
+        <div className="route-table-section-header">
+          <div>
+            <h3>Recorridos inactivos</h3>
+            <p>
+              Estos recorridos no aparecen en la app del guardia. Desde aquí
+              puedes activarlos o eliminarlos.
+            </p>
+          </div>
+        </div>
+
+        <CatalogTable
+          columns={[
+            "Recorrido",
+            "Propiedad",
+            "Puntos",
+            "Estado",
+            "Acciones",
+          ]}
+          rows={crearFilasTabla(recorridosInactivos, true)}
+        />
+      </section>
     </section>
   );
 }

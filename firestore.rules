@@ -1,0 +1,345 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function estaAutenticado() {
+      return request.auth != null;
+    }
+
+    function perfilActual() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data;
+    }
+
+    function usuarioActivo() {
+      return estaAutenticado()
+        && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid))
+        && perfilActual().activo == true;
+    }
+
+    function esAdministrador() { return usuarioActivo() && perfilActual().rol == 'administrador'; }
+    function esSupervisor() { return usuarioActivo() && perfilActual().rol == 'supervisor'; }
+    function esGuardia() { return usuarioActivo() && perfilActual().rol == 'guardia'; }
+    function esRH() { return usuarioActivo() && perfilActual().rol == 'rh'; }
+    function esNominas() { return usuarioActivo() && perfilActual().rol == 'nominas'; }
+    function esAsistencia() { return usuarioActivo() && perfilActual().rol == 'asistencia'; }
+
+    function rolValido(rol) {
+      return rol == 'administrador'
+        || rol == 'supervisor'
+        || rol == 'guardia'
+        || rol == 'rh'
+        || rol == 'nominas'
+        || rol == 'asistencia';
+    }
+
+    function datosUsuarioValidos() {
+      return request.resource.data.keys().hasAll([
+          'nombre', 'correo', 'rol', 'activo', 'propiedadId', 'propiedadesPermitidas'
+        ])
+        && request.resource.data.nombre is string
+        && request.resource.data.correo is string
+        && request.resource.data.rol is string
+        && rolValido(request.resource.data.rol)
+        && request.resource.data.activo is bool
+        && request.resource.data.propiedadId is string
+        && request.resource.data.propiedadesPermitidas is list;
+    }
+
+    function catalogoBaseValido() {
+      return request.resource.data.nombre is string
+        && request.resource.data.activo is bool;
+    }
+
+    function tienePermisosPersonalizados() {
+      return usuarioActivo()
+        && perfilActual().keys().hasAny(['permisosSistema'])
+        && perfilActual().permisosSistema is list;
+    }
+
+    function permisoBaseRol(permiso) {
+      return esAdministrador()
+        || (esRH() && permiso in [
+          'configuracion.personal', 'configuracion.puestos', 'configuracion.horarios', 'rh.planeacion_personal', 'asistencia.resolver_turnos_eventuales', 'reportes.eventuales', 'reportes.practicantes', 'reportes.mexico'
+        ])
+        || (esNominas() && permiso == 'reportes.mexico')
+        || (esSupervisor() && permiso in ['reportes.recorridos', 'reportes.incidencias'])
+        || (esGuardia() && (
+          permiso in ['operacion.recorridos', 'operacion.incidencias']
+          || (perfilActual().modulosPermitidos is list
+            && perfilActual().modulosPermitidos.hasAny(['asistencia'])
+            && permiso == 'operacion.asistencia')
+        ))
+        || (esAsistencia() && permiso == 'operacion.asistencia');
+    }
+
+    function permisoPermitidoRol(permiso) {
+      return esAdministrador()
+        || (esRH() && permiso in [
+          'configuracion.personal', 'configuracion.puestos', 'configuracion.horarios', 'rh.planeacion_personal', 'asistencia.resolver_turnos_eventuales', 'reportes.eventuales', 'reportes.practicantes', 'reportes.mexico'
+        ])
+        || (esNominas() && permiso == 'reportes.mexico')
+        || (esSupervisor() && permiso in ['reportes.recorridos', 'reportes.incidencias'])
+        || (esGuardia() && permiso in ['operacion.recorridos', 'operacion.incidencias', 'operacion.asistencia'])
+        || (esAsistencia() && permiso == 'operacion.asistencia');
+    }
+
+    function tienePermisoSistema(permiso) {
+      return usuarioActivo()
+        && (
+          esAdministrador()
+          || (tienePermisosPersonalizados() && permisoPermitidoRol(permiso) && perfilActual().permisosSistema.hasAny([permiso]))
+          || (!tienePermisosPersonalizados() && permisoBaseRol(permiso))
+        );
+    }
+
+    function tieneModulo(modulo) {
+      return modulo == 'asistencia'
+        && (
+          tienePermisoSistema('configuracion.personal')
+          || tienePermisoSistema('configuracion.puestos')
+          || tienePermisoSistema('configuracion.horarios')
+          || tienePermisoSistema('rh.planeacion_personal')
+          || tienePermisoSistema('reportes.eventuales')
+          || tienePermisoSistema('reportes.practicantes')
+          || tienePermisoSistema('reportes.mexico')
+          || tienePermisoSistema('operacion.asistencia')
+        );
+    }
+
+    function puedeLeerAsistenciaTipo(tipo, propiedadId) {
+      return puedeVerPropiedad(propiedadId)
+        && (
+          esAdministrador()
+          || tienePermisoSistema('configuracion.personal')
+          || (tipo == 'eventual' && tienePermisoSistema('reportes.eventuales'))
+          || (tipo == 'practicante' && tienePermisoSistema('reportes.practicantes'))
+          || (tipo == 'personal_mexico' && tienePermisoSistema('reportes.mexico'))
+        );
+    }
+
+    function puedeVerPropiedad(propiedadId) {
+      return esAdministrador()
+        || perfilActual().propiedadesPermitidas.hasAny(['*'])
+        || perfilActual().propiedadesPermitidas.hasAny([propiedadId])
+        || perfilActual().propiedadId == propiedadId;
+    }
+
+    match /usuarios/{usuarioId} {
+      allow read: if usuarioActivo()
+        && (esAdministrador() || request.auth.uid == usuarioId);
+      allow create, update: if esAdministrador() && datosUsuarioValidos();
+      allow delete: if false;
+    }
+
+    match /roles/{rolId} {
+      allow read: if usuarioActivo();
+      allow create, update: if esAdministrador() && catalogoBaseValido();
+      allow delete: if false;
+    }
+
+    match /permisos/{permisoId} {
+      allow read: if esAdministrador();
+      allow write: if false;
+    }
+
+    match /puestos/{puestoId} {
+      allow read: if esAdministrador()
+        || tienePermisoSistema('configuracion.personal')
+        || tienePermisoSistema('configuracion.puestos');
+      allow write: if false;
+    }
+
+    match /horarios/{horarioId} {
+      allow read: if esAdministrador()
+        || tienePermisoSistema('configuracion.horarios')
+        || tienePermisoSistema('rh.planeacion_personal');
+      allow write: if false;
+    }
+
+    match /necesidadesPersonal/{necesidadId} {
+      allow read: if esAdministrador()
+        || (tienePermisoSistema('rh.planeacion_personal')
+          && resource.data.propiedadId is string
+          && puedeVerPropiedad(resource.data.propiedadId));
+      allow write: if false;
+    }
+
+    match /programacionPersonal/{asignacionId} {
+      allow read: if esAdministrador()
+        || (tienePermisoSistema('rh.planeacion_personal')
+          && resource.data.propiedadId is string
+          && puedeVerPropiedad(resource.data.propiedadId));
+      allow write: if false;
+    }
+
+    match /propiedades/{propiedadId} {
+      // Se mantiene lectura amplia para no romper los flujos actuales de guardia.
+      allow read: if usuarioActivo();
+      allow create, update: if esAdministrador()
+        && catalogoBaseValido()
+        && request.resource.data.codigo is string;
+      allow delete: if false;
+    }
+
+    match /tiposIncidencia/{tipoId} {
+      allow read: if usuarioActivo();
+      allow create, update: if esAdministrador()
+        && catalogoBaseValido()
+        && request.resource.data.prioridadDefault is string;
+      allow delete: if false;
+    }
+
+    match /plantillasRecorridos/{plantillaId} {
+      allow read: if usuarioActivo();
+      allow create, update: if esAdministrador()
+        && request.resource.data.nombre is string
+        && request.resource.data.propiedadId is string
+        && request.resource.data.activo is bool
+        && request.resource.data.puntos is list
+        && request.resource.data.totalPuntos is int
+        && request.resource.data.puntos.size() == request.resource.data.totalPuntos;
+      allow delete: if esAdministrador() && resource.data.activo == false;
+    }
+
+    match /asignacionesRecorridos/{asignacionId} {
+      allow read: if usuarioActivo()
+        && (esAdministrador() || (esSupervisor() && tienePermisoSistema('reportes.recorridos'))
+          || (esGuardia() && tienePermisoSistema('operacion.recorridos') && resource.data.guardiaId == request.auth.uid));
+      allow create, update: if esAdministrador()
+        && request.resource.data.plantillaId is string
+        && request.resource.data.plantillaNombre is string
+        && request.resource.data.propiedadId is string
+        && request.resource.data.turno is string
+        && request.resource.data.puntos is list
+        && request.resource.data.totalPuntos is int
+        && request.resource.data.guardiaId is string
+        && request.resource.data.guardiaNombre is string
+        && request.resource.data.fechaProgramada is string
+        && request.resource.data.estado is string
+        && request.resource.data.activo is bool;
+      allow delete: if false;
+    }
+
+    match /dispositivos/{dispositivoId} {
+      allow get: if usuarioActivo();
+      allow list: if esAdministrador() || esSupervisor();
+      allow create: if esGuardia()
+        && request.resource.data.usuarioId == request.auth.uid
+        && request.resource.data.deviceId == dispositivoId
+        && request.resource.data.identificador == dispositivoId
+        && request.resource.data.codigoDispositivo == dispositivoId
+        && request.resource.data.registroAutomatico == true
+        && request.resource.data.nombre is string
+        && request.resource.data.activo is bool
+        && request.resource.data.propiedadesPermitidas is list;
+      allow update: if usuarioActivo()
+        && (esAdministrador() || esSupervisor()
+          || (esGuardia()
+            && request.resource.data.usuarioId == request.auth.uid
+            && request.resource.data.deviceId == dispositivoId
+            && request.resource.data.identificador == dispositivoId
+            && request.resource.data.codigoDispositivo == dispositivoId
+            && request.resource.data.registroAutomatico == true
+            && request.resource.data.propiedadesPermitidas is list));
+      allow delete: if false;
+    }
+
+    match /ejecucionesRecorridos/{ejecucionId} {
+      allow read: if usuarioActivo()
+        && (esAdministrador() || (esSupervisor() && tienePermisoSistema('reportes.recorridos'))
+          || (esGuardia() && tienePermisoSistema('operacion.recorridos') && resource.data.guardiaId == request.auth.uid));
+      allow create, update: if esGuardia()
+        && tienePermisoSistema('operacion.recorridos')
+        && request.resource.data.guardiaId == request.auth.uid
+        && request.resource.data.propiedadId is string
+        && puedeVerPropiedad(request.resource.data.propiedadId)
+        && request.resource.data.plantillaId is string
+        && request.resource.data.estado is string;
+      allow delete: if false;
+    }
+
+    match /evidenciasPuntos/{evidenciaId} {
+      allow read: if usuarioActivo()
+        && (esAdministrador() || (esSupervisor() && tienePermisoSistema('reportes.recorridos'))
+          || (esGuardia() && tienePermisoSistema('operacion.recorridos') && resource.data.guardiaId == request.auth.uid));
+      allow create, update: if esGuardia()
+        && tienePermisoSistema('operacion.recorridos')
+        && request.resource.data.guardiaId == request.auth.uid
+        && request.resource.data.propiedadId is string
+        && puedeVerPropiedad(request.resource.data.propiedadId)
+        && request.resource.data.ejecucionId is string
+        && request.resource.data.plantillaId is string
+        && request.resource.data.puntoId is string
+        && request.resource.data.puntoNombre is string;
+      allow delete: if false;
+    }
+
+    match /incidencias/{incidenciaId} {
+      allow read: if usuarioActivo()
+        && (esAdministrador() || (esSupervisor() && tienePermisoSistema('reportes.incidencias'))
+          || (esGuardia() && tienePermisoSistema('operacion.incidencias') && resource.data.guardiaId == request.auth.uid));
+      allow create: if esGuardia()
+        && tienePermisoSistema('operacion.incidencias')
+        && request.resource.data.guardiaId == request.auth.uid
+        && request.resource.data.propiedadId is string
+        && puedeVerPropiedad(request.resource.data.propiedadId)
+        && request.resource.data.tipo in ['proveedor', 'hechos_relevantes'];
+      allow update: if usuarioActivo()
+        && (esAdministrador() || (esSupervisor() && tienePermisoSistema('reportes.incidencias'))
+          || (esGuardia() && tienePermisoSistema('operacion.incidencias') && resource.data.guardiaId == request.auth.uid));
+      allow delete: if false;
+    }
+
+    match /asistenciaPersonal/{empleadoId} {
+      allow read: if usuarioActivo()
+        && puedeLeerAsistenciaTipo(resource.data.tipo, resource.data.propiedadId)
+        || (usuarioActivo()
+          && resource.data.propiedadesPermitidas is list
+          && resource.data.propiedadesPermitidas.hasAny(perfilActual().propiedadesPermitidas)
+          && (
+            esAdministrador()
+            || tienePermisoSistema('configuracion.personal')
+            || (resource.data.tipo == 'eventual' && tienePermisoSistema('reportes.eventuales'))
+            || (resource.data.tipo == 'practicante' && tienePermisoSistema('reportes.practicantes'))
+            || (resource.data.tipo == 'personal_mexico' && tienePermisoSistema('reportes.mexico'))
+          ));
+      allow write: if false;
+    }
+
+    match /asistenciaJornadas/{jornadaId} {
+      allow read: if usuarioActivo()
+        && puedeLeerAsistenciaTipo(resource.data.tipoPersonal, resource.data.propiedadId);
+      allow write: if false;
+    }
+
+    match /asistenciaMovimientos/{movimientoId} {
+      allow read: if usuarioActivo()
+        && puedeLeerAsistenciaTipo(resource.data.tipoPersonal, resource.data.propiedadId);
+      allow write: if false;
+    }
+
+    match /asistenciaEstado/{empleadoId} {
+      allow read, write: if false;
+    }
+
+    match /configuracionAsistencia/{configId} {
+      allow read: if esAdministrador();
+      allow write: if false;
+    }
+
+    match /asistenciaAuditoria/{registroId} {
+      allow read: if esAdministrador();
+      allow write: if false;
+    }
+
+    match /auditoria/{registroId} {
+      allow read: if esAdministrador();
+      allow write: if false;
+    }
+
+    match /{documento=**} {
+      allow read, write: if false;
+    }
+  }
+}

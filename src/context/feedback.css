@@ -1,0 +1,215 @@
+.gmr-feedback-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  padding: 18px;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 23, 42, 0.62);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  animation: gmrFeedbackFade 0.16s ease-out;
+}
+
+.gmr-feedback-modal {
+  position: relative;
+  width: min(92vw, 480px);
+  max-height: min(84dvh, 680px);
+  overflow: auto;
+  padding: 28px;
+  border: 1px solid rgba(203, 213, 225, 0.9);
+  border-radius: 26px;
+  background: #fff;
+  color: #10283a;
+  box-shadow: 0 32px 90px rgba(15, 23, 42, 0.34);
+  animation: gmrFeedbackPop 0.18s ease-out;
+}
+
+.gmr-feedback-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 40px;
+  height: 40px;
+  border: 1px solid #dbe4ea;
+  border-radius: 13px;
+  background: #fff;
+  color: #334155;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.gmr-feedback-close:hover {
+  background: #f8fafc;
+}
+
+.gmr-feedback-icon {
+  width: 70px;
+  height: 70px;
+  margin-bottom: 18px;
+  border-radius: 22px;
+  display: grid;
+  place-items: center;
+}
+
+.gmr-feedback-icon.success {
+  color: #067a57;
+  background: #e7f7f0;
+}
+
+.gmr-feedback-icon.error {
+  color: #b42318;
+  background: #fff0ee;
+}
+
+.gmr-feedback-icon.warning,
+.gmr-feedback-icon.danger {
+  color: #a15c00;
+  background: #fff5df;
+}
+
+.gmr-feedback-icon.info {
+  color: #247f91;
+  background: #e9f5f7;
+}
+
+.gmr-feedback-copy {
+  padding-right: 26px;
+}
+
+.gmr-feedback-kicker {
+  margin: 0 0 5px;
+  color: #247f91;
+  font-size: 0.74rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.gmr-feedback-modal.error .gmr-feedback-kicker {
+  color: #b42318;
+}
+
+.gmr-feedback-modal.warning .gmr-feedback-kicker,
+.gmr-feedback-modal.danger .gmr-feedback-kicker {
+  color: #a15c00;
+}
+
+.gmr-feedback-modal.success .gmr-feedback-kicker {
+  color: #067a57;
+}
+
+.gmr-feedback-copy h2 {
+  margin: 0;
+  color: #10283a;
+  font-size: clamp(1.35rem, 4vw, 1.7rem);
+  line-height: 1.15;
+}
+
+.gmr-feedback-copy > p:last-of-type {
+  margin: 12px 0 0;
+  color: #526274;
+  font-size: 1rem;
+  line-height: 1.55;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.gmr-feedback-details {
+  margin: 14px 0 0;
+  padding: 12px;
+  max-height: 180px;
+  overflow: auto;
+  border-radius: 14px;
+  background: #f3f6f8;
+  color: #334155;
+  font: 0.78rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+}
+
+.gmr-feedback-actions {
+  margin-top: 24px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.gmr-feedback-actions .gmr-feedback-button:only-child {
+  grid-column: 1 / -1;
+}
+
+.gmr-feedback-actions.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.gmr-feedback-button {
+  min-height: 50px;
+  padding: 0 18px;
+  border-radius: 15px;
+  font-weight: 900;
+  font-size: 0.96rem;
+  cursor: pointer;
+}
+
+.gmr-feedback-button.secondary {
+  border: 1px solid #d6e0e7;
+  background: #fff;
+  color: #10283a;
+}
+
+.gmr-feedback-button.primary {
+  border: 1px solid #247f91;
+  background: #247f91;
+  color: #fff;
+}
+
+.gmr-feedback-button.primary.danger {
+  border-color: #b42318;
+  background: #b42318;
+}
+
+.gmr-feedback-button:focus-visible,
+.gmr-feedback-close:focus-visible {
+  outline: 3px solid rgba(36, 127, 145, 0.24);
+  outline-offset: 2px;
+}
+
+@keyframes gmrFeedbackFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes gmrFeedbackPop {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 520px) {
+  .gmr-feedback-overlay {
+    padding: 14px;
+    place-items: end center;
+  }
+
+  .gmr-feedback-modal {
+    width: 100%;
+    max-height: 78dvh;
+    padding: 24px 20px calc(20px + env(safe-area-inset-bottom));
+    border-radius: 24px 24px 20px 20px;
+  }
+
+  .gmr-feedback-icon {
+    width: 62px;
+    height: 62px;
+    border-radius: 19px;
+  }
+
+  .gmr-feedback-actions,
+  .gmr-feedback-actions.three {
+    grid-template-columns: 1fr;
+  }
+
+  .gmr-feedback-actions .gmr-feedback-button:only-child {
+    grid-column: auto;
+  }
+}

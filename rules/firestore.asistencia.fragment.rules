@@ -1,0 +1,75 @@
+// Insert INSIDE match /databases/{database}/documents. Do not replace the rest.
+function asiPerfil() {
+  return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data;
+}
+function asiActivo() {
+  return request.auth != null && asiPerfil().activo == true;
+}
+function asiModulo() {
+  return asiActivo() && (
+    asiPerfil().rol == 'administrador' || asiPerfil().rol == 'asistencia'
+    || (asiPerfil().rol in ['guardia', 'supervisor']
+      && asiPerfil().get('modulosPermitidos', []).hasAny(['asistencia']))
+  );
+}
+function asiPropiedad(id) {
+  let p = asiPerfil();
+  let permisos = p.get('propiedadesPermitidas', []);
+  return asiModulo() && (
+    p.rol == 'administrador'
+    || (p.rol == 'asistencia'
+      && permisos == [id]
+      && get(/databases/$(database)/documents/configuracionAsistencia/mexico).data.propiedadId == id)
+    || (p.rol in ['supervisor', 'guardia']
+      && (permisos.hasAny(['*', id]) || (permisos.size() == 0 && p.get('propiedadId', '') == id)))
+  );
+}
+function asiReporte(id) {
+  return asiActivo() && asiPerfil().rol in ['administrador', 'supervisor'] && asiPropiedad(id);
+}
+// Allows Mexico's own profile after the integration script gates legacy rules.
+match /usuarios/{uid} {
+  allow get: if request.auth != null && request.auth.uid == uid;
+  allow create, update: if asiActivo() && asiPerfil().rol == 'administrador'
+    && request.resource.data.rol == 'asistencia'
+    && request.resource.data.nombre is string
+    && request.resource.data.correo is string
+    && request.resource.data.activo is bool
+    && request.resource.data.propiedadesPermitidas == [request.resource.data.propiedadId]
+    && request.resource.data.modulosPermitidos == ['asistencia']
+    && request.resource.data.propiedadId == get(/databases/$(database)/documents/configuracionAsistencia/mexico).data.propiedadId;
+}
+match /propiedades/{id} {
+  allow get: if asiActivo() && asiPerfil().rol == 'asistencia' && asiPropiedad(id);
+}
+match /configuracionAsistencia/{id} {
+  allow read: if asiActivo() && asiPerfil().rol == 'administrador';
+  allow write: if false;
+}
+match /asistenciaPersonal/{id} {
+  allow read: if asiReporte(resource.data.propiedadId);
+  allow write: if false;
+}
+match /asistenciaJornadas/{id} {
+  allow read: if asiReporte(resource.data.propiedadId);
+  allow write: if false;
+}
+match /asistenciaMovimientos/{id} {
+  allow read: if asiReporte(resource.data.propiedadId);
+  allow write: if false;
+}
+match /asistenciaEstado/{id} {
+  allow read, write: if false;
+}
+match /asistenciaAuditoria/{id} {
+  allow read: if asiReporte(resource.data.propiedadId);
+  allow write: if false;
+}
+match /asistenciaPuestos/{id} {
+  allow read: if asiActivo() && asiPerfil().rol == 'administrador';
+  allow write: if false;
+}
+match /asistenciaImportaciones/{id} {
+  allow read: if asiActivo() && asiPerfil().rol == 'administrador';
+  allow write: if false;
+}

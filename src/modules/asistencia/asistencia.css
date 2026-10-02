@@ -1,0 +1,764 @@
+/* All new selectors are scoped. Existing guard/admin CSS is not removed. */
+.asistencia-dashboard { min-height:100dvh; background:#f4f7fa; padding:16px; color:#112b3c; }
+.asistencia-dashboard-header { max-width:1150px; margin:0 auto 16px; display:flex; justify-content:space-between; gap:12px; align-items:center; }
+.asistencia-dashboard-header button { padding:10px 14px; border:1px solid #dbe4ea; border-radius:12px; background:white; color:#112b3c; }
+.asistencia-module { width:100%; max-width:1150px; margin:auto; color:#112b3c; font:inherit; }
+.asistencia-module * { box-sizing:border-box; }
+.asistencia-module h1 { font-size:clamp(1.5rem,4vw,2rem); margin:0; }
+.asistencia-module h2 { font-size:1.35rem; margin:0 0 10px; }
+.asistencia-module h3,.asistencia-module h4 { margin:18px 0 10px; }
+.asistencia-module p { margin:8px 0 14px; line-height:1.5; }
+.asistencia-module small { display:block; overflow-wrap:anywhere; }
+.asistencia-module button { min-height:44px; border:1px solid #cedde4; border-radius:12px; padding:10px 14px; background:white; color:#112b3c; font:inherit; font-weight:700; display:inline-flex; gap:8px; align-items:center; justify-content:center; cursor:pointer; }
+.asistencia-module button:disabled { opacity:.6; cursor:not-allowed; }
+.asistencia-module button.asistencia-primary { color:white; background:#1f6f86; border-color:#1f6f86; }
+.asistencia-module button:focus-visible,.asistencia-module input:focus-visible,.asistencia-module select:focus-visible,.asistencia-module textarea:focus-visible { outline:3px solid #80c8df; outline-offset:2px; }
+.asistencia-module label { display:flex; flex-direction:column; gap:7px; color:#112b3c; font-weight:750; min-width:0; }
+.asistencia-module input,.asistencia-module select,.asistencia-module textarea { width:100%; max-width:100%; min-width:0; border:1px solid #cbd7de; border-radius:10px; min-height:46px; padding:10px 12px; font:inherit; background:#fff; color:#112b3c; }
+.asistencia-module textarea { min-height:100px; resize:vertical; }
+.asistencia-module .asistencia-heading { display:flex; gap:16px; align-items:center; justify-content:space-between; margin-bottom:18px; }
+.asistencia-module .asistencia-eyebrow { color:#1f6f86; text-transform:uppercase; letter-spacing:.1em; font-size:.75rem; font-weight:800; }
+.asistencia-module .asistencia-note { padding:12px 14px; color:#485c67; background:#eef4f7; border-radius:12px; font-size:.93rem; }
+.asistencia-module .asistencia-alert { padding:12px 14px; color:#713d00; background:#fff5df; border:1px solid #eed49d; border-radius:12px; overflow-wrap:anywhere; }
+.asistencia-module .asistencia-success { display:flex; align-items:flex-start; gap:10px; padding:18px; margin:16px 0; background:#e9f7f1; border:1px solid #a5dec8; color:#135f48; border-radius:16px; }
+.asistencia-module .asistencia-tabs { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:18px; }
+.asistencia-module .asistencia-tabs button[aria-pressed=true] { background:#1f6f86; color:white; }
+.asistencia-module .asistencia-property { max-width:520px; margin-bottom:18px; }
+.asistencia-module .asistencia-property-name { font-weight:800; font-size:1.05rem; }
+.asistencia-module .asistencia-registro { max-width:600px; margin:16px auto; padding:22px; background:white; border:1px solid #dbe4ea; border-radius:20px; }
+.asistencia-module .asistencia-search { display:grid; gap:12px; }
+.asistencia-module .asistencia-confirm { display:grid; gap:10px; }
+.asistencia-module .asistencia-movement { display:flex; align-items:center; gap:10px; padding:12px; background:#e9f3f7; border-radius:12px; }
+.asistencia-module .asistencia-preview { max-width:100%; width:100%; height:240px; object-fit:contain; border-radius:14px; background:#eff3f5; }
+.asistencia-module .asistencia-actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:14px 0; }
+.asistencia-module .asistencia-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; padding:18px; margin:18px 0; background:#f5f8fa; border-radius:16px; border:1px solid #dbe4ea; }
+.asistencia-module .asistencia-full,.asistencia-module .asistencia-form-grid .asistencia-actions { grid-column:1/-1; }
+.asistencia-module .asistencia-file-label { font-size:.9rem; flex:1; max-width:400px; }
+.asistencia-module .asistencia-table-wrap { max-width:100%; overflow:auto; margin:16px 0; border:1px solid #dbe4ea; border-radius:14px; }
+.asistencia-module table { width:100%; border-collapse:collapse; min-width:700px; font-size:.92rem; }
+.asistencia-module th,.asistencia-module td { padding:12px; text-align:left; vertical-align:middle; border-bottom:1px solid #dbe4ea; overflow-wrap:anywhere; }
+.asistencia-module th { background:#edf3f6; }
+.asistencia-module .asistencia-detail { background:#f7fafb; border:1px solid #dbe4ea; border-radius:16px; padding:18px; margin-top:18px; }
+.asistencia-module .asistencia-photos { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.asistencia-module .asistencia-photo { min-width:0; margin:0; padding:12px; background:white; border-radius:14px; border:1px solid #dbe4ea; }
+.asistencia-module .asistencia-photo figcaption { font-weight:800; margin-bottom:10px; }
+.asistencia-module .asistencia-photo img { width:100%; height:240px; object-fit:contain; }
+.asistencia-module .asistencia-camera-overlay { position:fixed; inset:0; z-index:500; display:grid; place-items:center; padding:16px; background:rgba(15,23,42,.65); overflow-y:auto; }
+.asistencia-module .asistencia-camera-card { width:min(600px,100%); max-height:94dvh; overflow:auto; padding:20px; background:white; border-radius:20px; }
+.asistencia-module .asistencia-camera-card video { width:100%; max-height:52dvh; border-radius:12px; background:#17212f; }
+.guardia-main-menu .guardia-main-menu-button.asistencia-menu-button { min-width:0; }
+@media(max-width:640px) {
+  .asistencia-dashboard { padding:12px; }
+  .asistencia-dashboard-header { align-items:flex-start; flex-direction:column; }
+  .asistencia-module .asistencia-heading { align-items:flex-start; flex-direction:column; }
+  .asistencia-module .asistencia-form-grid,.asistencia-module .asistencia-photos { grid-template-columns:1fr; }
+  .asistencia-module .asistencia-registro { padding:16px; }
+  .asistencia-module .asistencia-actions button { flex:1; }
+}
+
+.asistencia-dashboard-kicker { display:block; color:#1f6f86; font-size:.72rem; font-weight:900; letter-spacing:.12em; text-transform:uppercase; margin-bottom:3px; }
+.asistencia-property-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:10px; margin:0 0 18px; }
+.asistencia-module .asistencia-property-card { min-height:62px; justify-content:flex-start; text-align:left; background:#fff; }
+.asistencia-module .asistencia-property-card.active { color:#fff; background:#1f6f86; border-color:#1f6f86; }
+.asistencia-module .asistencia-scan-button { min-height:62px; font-size:1rem; }
+.asistencia-scanner-header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px; }
+.asistencia-scanner-header h3 { margin:0; }
+.asistencia-scanner-card > div:last-child { overflow:hidden; border-radius:14px; }
+@media(max-width:640px) {
+  .asistencia-property-grid { grid-template-columns:1fr 1fr; }
+}
+/* =========================================================
+   ASISTENCIA MEXICO - FLUJO SIMPLE, PIN Y CAMARA FRONTAL
+   ========================================================= */
+
+.asistencia-mexico-dashboard {
+  min-height: 100dvh;
+  background: #f4f8fa;
+  padding: 0 0 32px;
+}
+
+.asistencia-mexico-header {
+  width: min(760px, calc(100% - 24px));
+  max-width: none;
+  margin: 0 auto;
+  padding: 18px 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-direction: row;
+  gap: 14px;
+}
+
+.asistencia-brand {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.asistencia-brand-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  background: #e4f3f6;
+  color: #247f91;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.asistencia-brand span {
+  display: block;
+  color: #247f91;
+  font-size: .72rem;
+  font-weight: 900;
+  letter-spacing: .16em;
+}
+
+.asistencia-brand h1 {
+  margin: 2px 0 0;
+  color: #10283a;
+  font-size: clamp(1.25rem, 5vw, 1.75rem);
+  line-height: 1.1;
+}
+
+.asistencia-brand p {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: .88rem;
+  font-weight: 700;
+}
+
+.asistencia-logout-button {
+  min-height: 44px;
+  padding: 0 14px !important;
+  border: 1px solid #d6e0e7 !important;
+  border-radius: 14px !important;
+  background: white !important;
+  color: #10283a !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-weight: 900;
+  box-shadow: 0 7px 16px rgba(15, 23, 42, .04);
+}
+
+.asistencia-mexico-content {
+  width: min(760px, calc(100% - 24px));
+  margin: 0 auto;
+}
+
+.asistencia-module-mexico {
+  max-width: 760px;
+}
+
+.asistencia-module-mexico .asistencia-registro {
+  margin-top: 8px;
+}
+
+.asistencia-registro-simple {
+  width: 100%;
+}
+
+.asistencia-module .asistencia-search-simple,
+.asistencia-module .asistencia-confirm-simple {
+  padding: 22px;
+  border: 1px solid #dbe4ea;
+  border-radius: 26px;
+  background: white;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, .05);
+}
+
+.asistencia-module .asistencia-search-simple {
+  text-align: center;
+}
+
+.asistencia-search-icon {
+  width: 58px;
+  height: 58px;
+  margin: 0 auto 12px;
+  border-radius: 20px;
+  background: #e4f3f6;
+  color: #247f91;
+  display: grid;
+  place-items: center;
+}
+
+.asistencia-module .asistencia-search-simple h2 {
+  margin: 0 0 20px;
+  color: #10283a;
+  font-size: 1.45rem;
+}
+
+.asistencia-module .asistencia-search-simple label {
+  display: block;
+  margin-bottom: 7px;
+  color: #10283a;
+  text-align: left;
+  font-size: .88rem;
+  font-weight: 900;
+}
+
+.asistencia-module .asistencia-search-simple input {
+  width: 100%;
+  min-height: 58px;
+  box-sizing: border-box;
+  padding: 0 15px;
+  border: 1px solid #cbd8e1;
+  border-radius: 16px;
+  background: white;
+  color: #10283a;
+  font-size: 1rem;
+}
+
+.asistencia-module .asistencia-large-button {
+  width: 100%;
+  min-height: 56px;
+  margin-top: 14px;
+}
+
+.asistencia-person-card {
+  padding-bottom: 18px;
+  text-align: center;
+}
+
+.asistencia-person-card span {
+  display: block;
+  color: #64748b;
+  font-size: .78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+.asistencia-person-card h2 {
+  margin: 6px 0 3px !important;
+  color: #10283a;
+  font-size: clamp(1.5rem, 6vw, 2rem) !important;
+}
+
+.asistencia-person-card p {
+  margin: 0 !important;
+  color: #64748b;
+  font-weight: 800;
+}
+
+.asistencia-module .asistencia-movement {
+  min-height: 74px;
+  padding: 0 20px;
+  border-radius: 20px;
+  justify-content: center;
+  font-size: 1.15rem;
+}
+
+.asistencia-movement-entrada {
+  background: #e7f6ef !important;
+  color: #147a55;
+}
+
+.asistencia-movement-salida {
+  background: #e8f2f8 !important;
+  color: #1e6680;
+}
+
+.asistencia-entry-reference {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 16px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+
+.asistencia-entry-reference span {
+  display: block;
+  color: #64748b;
+  font-size: .78rem;
+  font-weight: 900;
+}
+
+.asistencia-entry-reference strong {
+  display: block;
+  margin-top: 4px;
+  color: #10283a;
+}
+
+.asistencia-photo-section {
+  margin-top: 18px;
+}
+
+.asistencia-photo-preview-container,
+.asistencia-photo-placeholder {
+  overflow: hidden;
+  min-height: 260px;
+  border-radius: 22px;
+  background: #eef4f7;
+  display: grid;
+  place-items: center;
+}
+
+.asistencia-photo-placeholder {
+  color: #64748b;
+  gap: 8px;
+}
+
+.asistencia-module .asistencia-preview {
+  width: 100%;
+  max-height: 420px;
+  height: auto;
+  object-fit: contain;
+  display: block;
+  border-radius: 22px;
+}
+
+.asistencia-module .asistencia-photo-button {
+  width: 100%;
+  min-height: 54px;
+  margin-top: 12px;
+}
+
+.asistencia-progress {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 16px;
+  background: #f1f6f8;
+  color: #334155;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  font-weight: 800;
+}
+
+.asistencia-actions-simple {
+  margin-top: 20px !important;
+  display: grid !important;
+  grid-template-columns: .8fr 1.2fr;
+  gap: 12px;
+}
+
+.asistencia-actions-simple button {
+  min-height: 56px;
+  font-size: .95rem;
+}
+
+.asistencia-success-simple {
+  margin-bottom: 16px !important;
+}
+
+.asistencia-simple-loading {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  color: #64748b;
+  font-weight: 800;
+}
+
+/* Camara frontal embebida */
+.asistencia-front-camera-card {
+  width: min(520px, 100%) !important;
+}
+
+.asistencia-camera-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.asistencia-camera-title span {
+  color: #247f91;
+  font-size: .75rem;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.asistencia-camera-title h3 {
+  margin: 2px 0 0 !important;
+}
+
+.asistencia-front-camera-preview {
+  position: relative;
+  overflow: hidden;
+  border-radius: 20px;
+  background: #101820;
+  aspect-ratio: 3 / 4;
+}
+
+.asistencia-module .asistencia-front-camera-preview video {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  object-fit: cover;
+  transform: scaleX(-1);
+  border-radius: 0;
+}
+
+.asistencia-camera-state {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: white;
+  background: rgba(15, 23, 42, .45);
+  font-weight: 800;
+}
+
+/* Reportes */
+.asistencia-report-page {
+  min-width: 0;
+}
+
+.asistencia-report-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.asistencia-report-title h2 {
+  margin: 2px 0 0 !important;
+}
+
+.asistencia-report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 12px 0 16px;
+}
+
+.asistencia-report-summary {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+  color: #64748b;
+}
+
+.asistencia-report-summary strong {
+  color: #10283a;
+  font-size: 1.35rem;
+}
+
+.asistencia-detail-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 700;
+  overflow-y: auto;
+  padding: 20px;
+  background: rgba(15, 23, 42, .62);
+  display: grid;
+  place-items: center;
+}
+
+.asistencia-detail-card {
+  width: min(900px, 100%);
+  max-height: 92dvh;
+  overflow-y: auto;
+  padding: 22px;
+  border-radius: 24px;
+  background: white;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, .22);
+}
+
+.asistencia-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.asistencia-detail-header h3 {
+  margin: 2px 0 0 !important;
+}
+
+.asistencia-detail-header p {
+  margin: 4px 0 0 !important;
+  color: #64748b;
+  font-weight: 800;
+}
+
+.asistencia-detail-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.asistencia-detail-stats > div {
+  padding: 14px;
+  border: 1px solid #dbe4ea;
+  border-radius: 16px;
+  background: #f8fafc;
+}
+
+.asistencia-detail-stats span {
+  display: block;
+  color: #64748b;
+  font-size: .75rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+
+.asistencia-detail-stats strong {
+  display: block;
+  margin-top: 5px;
+  color: #10283a;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .asistencia-mexico-header {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .asistencia-brand-icon {
+    width: 42px;
+    height: 42px;
+  }
+
+  .asistencia-logout-button {
+    width: 44px;
+    min-width: 44px;
+    padding: 0 !important;
+    flex-shrink: 0;
+  }
+
+  .asistencia-logout-button span {
+    display: none;
+  }
+
+  .asistencia-module .asistencia-search-simple,
+  .asistencia-module .asistencia-confirm-simple {
+    padding: 18px;
+    border-radius: 22px;
+  }
+
+  .asistencia-actions-simple {
+    grid-template-columns: 1fr;
+  }
+
+  .asistencia-detail-overlay {
+    padding: 8px;
+    align-items: end;
+  }
+
+  .asistencia-detail-card {
+    width: 100%;
+    max-height: 94dvh;
+    border-radius: 24px 24px 0 0;
+  }
+
+  .asistencia-detail-stats {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* Reportes dentro del portal Admin/RH */
+.asistencia-report-page {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+.asistencia-report-page .asistencia-form-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: end;
+}
+.asistencia-report-page .asistencia-form-grid > button {
+  min-height: 46px;
+}
+.asistencia-report-page .asistencia-table-wrap {
+  background: #fff;
+}
+.asistencia-report-page .asistencia-load-more {
+  margin-top: 12px;
+}
+.asistencia-report-page .empty-state {
+  margin-top: 12px;
+}
+@media (max-width: 1050px) {
+  .asistencia-report-page .asistencia-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 640px) {
+  .asistencia-report-page .asistencia-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* =====================================================
+   TURNOS PENDIENTES - EVENTUALES / PRACTICANTES
+   ===================================================== */
+.asistencia-pending-summary {
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid #f1d59a;
+  border-radius: 20px;
+  background: #fffaf0;
+}
+
+.asistencia-pending-summary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.asistencia-pending-summary-header h3 {
+  margin: 2px 0 0;
+  color: #10283a;
+  font-size: 1rem;
+}
+
+.asistencia-pending-count {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: #9a5a05;
+  color: white;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+}
+
+.asistencia-pending-list {
+  display: grid;
+  gap: 8px;
+}
+
+.asistencia-pending-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid #f0dfb9;
+  border-radius: 14px;
+  background: white;
+  color: #8a5300;
+}
+
+.asistencia-pending-item > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.asistencia-pending-item strong {
+  color: #10283a;
+}
+
+.asistencia-pending-item span,
+.asistencia-pending-list small {
+  color: #6b7280;
+  font-size: .84rem;
+  line-height: 1.35;
+}
+
+.asistencia-pending-loading,
+.asistencia-pending-empty {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #6b7280;
+  font-weight: 700;
+}
+
+.asistencia-pending-resolution {
+  padding: 20px;
+  border: 1px solid #f1d59a;
+  border-radius: 24px;
+  background: white;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, .05);
+  text-align: center;
+}
+
+.asistencia-pending-resolution h2 {
+  margin: 6px 0 2px;
+  color: #10283a;
+  font-size: 1.45rem;
+}
+
+.asistencia-pending-resolution > p:not(.asistencia-note) {
+  margin: 0 0 16px;
+  color: #64748b;
+  font-weight: 800;
+}
+
+.asistencia-pending-icon {
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 8px;
+  border-radius: 18px;
+  background: #fff4d8;
+  color: #9a5a05;
+  display: grid;
+  place-items: center;
+}
+
+.asistencia-pending-details {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 16px 0;
+  text-align: left;
+}
+
+.asistencia-pending-details > div {
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.asistencia-pending-details span {
+  display: block;
+  color: #64748b;
+  font-size: .72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.asistencia-pending-details strong {
+  display: block;
+  margin-top: 4px;
+  color: #10283a;
+  overflow-wrap: anywhere;
+}
+
+.asistencia-pending-actions {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.asistencia-pending-actions button {
+  min-height: 52px;
+  width: 100%;
+}
+
+.asistencia-success-note {
+  display: block;
+  margin: 3px 0 5px;
+  color: #16694c;
+  font-weight: 800;
+}
+
+@media (max-width: 520px) {
+  .asistencia-pending-details {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CalendarDays,
   ClipboardCheck,
@@ -7,16 +7,39 @@ import {
   Filter,
   MapPin,
   RotateCcw,
+  Search,
   User,
   FileText,
   X,
 } from "lucide-react";
 import CatalogTable from "../../../components/CatalogTable";
+import DataLoadingState from "../../../components/DataLoadingState";
+import {
+  consultarEvidenciasRecorrido,
+  consultarRecorridosPorRango,
+} from "../../../services/reportesRecorridosService";
 import { formatDate } from "../../../utils/formatters";
-import { generarPdfRecorrido } from "../../../services/pdfReportService";
+import { useFeedback } from "../../../context/FeedbackContext";
+
+
 
 function safeArray(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function fechaInputLocal(fecha = new Date()) {
+  const year = fecha.getFullYear();
+  const month = String(fecha.getMonth() + 1).padStart(2, "0");
+  const day = String(fecha.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function rangoMesActual() {
+  const ahora = new Date();
+  return {
+    inicio: fechaInputLocal(new Date(ahora.getFullYear(), ahora.getMonth(), 1)),
+    fin: fechaInputLocal(new Date(ahora.getFullYear(), ahora.getMonth() + 1, 0)),
+  };
 }
 
 function normalizarTexto(texto = "") {
@@ -48,6 +71,15 @@ function obtenerIdPropiedad(ejecucion) {
 
 function obtenerFechaReporte(ejecucion) {
   return ejecucion?.finalizadaEn || ejecucion?.iniciadaEn || "";
+}
+
+function obtenerEstadoVisible(ejecucion) {
+  if (ejecucion?.motivoCierreAutomatico === "guardia_no_termino") {
+    return "Guardia no terminó";
+  }
+
+  if (ejecucion?.estado === "cerrado_incompleto") return "Cerrado incompleto";
+  return ejecucion?.estado || "finalizado";
 }
 
 function convertirAFecha(valor) {
@@ -89,20 +121,6 @@ function convertirAFecha(valor) {
 function obtenerTimestamp(valor) {
   const fecha = convertirAFecha(valor);
   return fecha ? fecha.getTime() : 0;
-}
-
-function crearFechaInicio(fechaTexto) {
-  if (!fechaTexto) return null;
-
-  const fecha = new Date(`${fechaTexto}T00:00:00`);
-  return Number.isNaN(fecha.getTime()) ? null : fecha;
-}
-
-function crearFechaFin(fechaTexto) {
-  if (!fechaTexto) return null;
-
-  const fecha = new Date(`${fechaTexto}T23:59:59`);
-  return Number.isNaN(fecha.getTime()) ? null : fecha;
 }
 
 function calcularDuracion(inicio, cierre) {
@@ -154,22 +172,79 @@ function tieneFoto(evidencia) {
 }
 
 export default function ReportesPanel({
-  ejecuciones = [],
-  evidencias = [],
   propiedades = [],
+  propiedadesPermitidas = null,
 }) {
+  const feedback = useFeedback();
+  const hoy = useMemo(() => fechaInputLocal(new Date()), []);
+  const propiedadesPermitidasSafe = useMemo(
+    () => Array.isArray(propiedadesPermitidas) ? propiedadesPermitidas : null,
+    [propiedadesPermitidas]
+  );
+
+  const [ejecuciones, setEjecuciones] = useState([]);
+  const [reportLoading, setReportLoading] = useState(true);
+  const [reportError, setReportError] = useState(null);
   const [selectedPropertyId, setSelectedPropertyId] = useState("todas");
   const [selectedGuardiaId, setSelectedGuardiaId] = useState("todos");
-  const [fechaInicio, setFechaInicio] = useState("");
-  const [fechaFin, setFechaFin] = useState("");
+  const [fechaInicio, setFechaInicio] = useState(hoy);
+  const [fechaFin, setFechaFin] = useState(hoy);
+  const [rangoAplicado, setRangoAplicado] = useState({ inicio: hoy, fin: hoy });
   const [selectedExecutionId, setSelectedExecutionId] = useState("");
   const [selectedPhoto, setSelectedPhoto] = useState(null);
   const [photoLoading, setPhotoLoading] = useState(false);
   const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [generatingSummaryPdf, setGeneratingSummaryPdf] = useState(false);
+  const [selectedEvidenceRemote, setSelectedEvidenceRemote] = useState([]);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [evidenceError, setEvidenceError] = useState("");
 
   const ejecucionesSafe = safeArray(ejecuciones);
-  const evidenciasSafe = safeArray(evidencias);
   const propiedadesSafe = safeArray(propiedades);
+
+  const cargarRecorridos = useCallback(
+    async (inicio, fin) => {
+      if (!inicio || !fin) {
+        feedback.warning("Selecciona las dos fechas antes de consultar.");
+        return;
+      }
+
+      if (inicio > fin) {
+        feedback.warning("La fecha inicial no puede ser posterior a la fecha final.");
+        return;
+      }
+
+      setReportLoading(true);
+      setReportError(null);
+
+      try {
+        const rows = await consultarRecorridosPorRango({
+          fechaInicio: inicio,
+          fechaFin: fin,
+          propiedadesPermitidas: propiedadesPermitidasSafe,
+        });
+
+        setEjecuciones(rows);
+        setRangoAplicado({ inicio, fin });
+        setSelectedExecutionId("");
+        setSelectedEvidenceRemote([]);
+      } catch (error) {
+        console.error("Error consultando recorridos por rango:", error);
+        setEjecuciones([]);
+        setReportError(error);
+        feedback.error(
+          error?.message || "No fue posible consultar los recorridos del periodo."
+        );
+      } finally {
+        setReportLoading(false);
+      }
+    },
+    [feedback, propiedadesPermitidasSafe]
+  );
+
+  useEffect(() => {
+    cargarRecorridos(hoy, hoy);
+  }, [cargarRecorridos, hoy]);
 
   const propiedadesMap = useMemo(() => {
     const map = new Map();
@@ -236,9 +311,6 @@ export default function ReportesPanel({
   }, [ejecucionesSafe]);
 
   const ejecucionesFiltradas = useMemo(() => {
-    const inicioFiltro = crearFechaInicio(fechaInicio);
-    const finFiltro = crearFechaFin(fechaFin);
-
     const base = ejecucionesSafe.filter((ejecucion) => {
       const propiedadCoincide =
         selectedPropertyId === "todas" ||
@@ -250,20 +322,7 @@ export default function ReportesPanel({
       const guardiaCoincide =
         selectedGuardiaId === "todos" || guardiaId === selectedGuardiaId;
 
-      const fechaReporte = convertirAFecha(obtenerFechaReporte(ejecucion));
-
-      const fechaCoincideInicio =
-        !inicioFiltro || (fechaReporte && fechaReporte >= inicioFiltro);
-
-      const fechaCoincideFin =
-        !finFiltro || (fechaReporte && fechaReporte <= finFiltro);
-
-      return (
-        propiedadCoincide &&
-        guardiaCoincide &&
-        fechaCoincideInicio &&
-        fechaCoincideFin
-      );
+      return propiedadCoincide && guardiaCoincide;
     });
 
     return [...base].sort(
@@ -271,35 +330,15 @@ export default function ReportesPanel({
         obtenerTimestamp(obtenerFechaReporte(b)) -
         obtenerTimestamp(obtenerFechaReporte(a))
     );
-  }, [
-    ejecucionesSafe,
-    selectedPropertyId,
-    selectedGuardiaId,
-    fechaInicio,
-    fechaFin,
-  ]);
+  }, [ejecucionesSafe, selectedPropertyId, selectedGuardiaId]);
 
   const evidenciasPorEjecucion = useMemo(() => {
     const map = new Map();
-
-    evidenciasSafe.forEach((evidencia) => {
-      if (!evidencia?.ejecucionId) return;
-
-      if (!map.has(evidencia.ejecucionId)) {
-        map.set(evidencia.ejecucionId, []);
-      }
-
-      map.get(evidencia.ejecucionId).push(evidencia);
-    });
-
-    map.forEach((items) => {
-      items.sort(
-        (a, b) => Number(a?.puntoOrden || 0) - Number(b?.puntoOrden || 0)
-      );
-    });
-
+    if (selectedExecutionId) {
+      map.set(selectedExecutionId, selectedEvidenceRemote);
+    }
     return map;
-  }, [evidenciasSafe]);
+  }, [selectedExecutionId, selectedEvidenceRemote]);
 
   const ejecucionesSeguras = Array.isArray(ejecucionesFiltradas)
     ? ejecucionesFiltradas
@@ -310,12 +349,8 @@ export default function ReportesPanel({
     ejecucionesSeguras[0] ||
     null;
 
-  const selectedEvidence = selectedExecution
-    ? evidenciasPorEjecucion.get(selectedExecution.id) || []
-    : [];
-
-  const selectedEvidenceSafe = Array.isArray(selectedEvidence)
-    ? selectedEvidence
+  const selectedEvidenceSafe = Array.isArray(selectedEvidenceRemote)
+    ? selectedEvidenceRemote
     : [];
 
   const puntosCapturadosSeleccionado = selectedEvidenceSafe.length;
@@ -340,12 +375,56 @@ export default function ReportesPanel({
     }
   }, [ejecucionesSeguras, selectedExecutionId]);
 
-  function limpiarFiltros() {
-    setSelectedPropertyId("todas");
-    setSelectedGuardiaId("todos");
-    setFechaInicio("");
-    setFechaFin("");
-    setSelectedExecutionId("");
+  useEffect(() => {
+    let alive = true;
+
+    if (!selectedExecution?.id) {
+      setSelectedEvidenceRemote([]);
+      setEvidenceError("");
+      setEvidenceLoading(false);
+      return () => {
+        alive = false;
+      };
+    }
+
+    setEvidenceLoading(true);
+    setEvidenceError("");
+    setSelectedEvidenceRemote([]);
+
+    consultarEvidenciasRecorrido(selectedExecution.id)
+      .then((rows) => {
+        if (alive) setSelectedEvidenceRemote(rows);
+      })
+      .catch((err) => {
+        if (alive) {
+          console.error("Error cargando evidencias del recorrido:", err);
+          setEvidenceError(err?.message || "No fue posible cargar las evidencias.");
+        }
+      })
+      .finally(() => {
+        if (alive) setEvidenceLoading(false);
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [selectedExecution?.id]);
+
+  async function consultarPeriodo() {
+    await cargarRecorridos(fechaInicio, fechaFin);
+  }
+
+  async function mostrarHoy() {
+    setFechaInicio(hoy);
+    setFechaFin(hoy);
+    await cargarRecorridos(hoy, hoy);
+  }
+
+  async function mostrarMesActual() {
+    const rango = rangoMesActual();
+    setFechaInicio(rango.inicio);
+    setFechaFin(rango.fin);
+    await cargarRecorridos(rango.inicio, rango.fin);
   }
 
   function abrirFoto(evidencia) {
@@ -380,13 +459,14 @@ export default function ReportesPanel({
     setGeneratingPdf(true);
 
     try {
-      await generarPdfRecorrido({
+      const { generarPdfRecorrido } = await import("../../../services/pdfReportService");
+    await generarPdfRecorrido({
         ejecucion: selectedExecution,
         evidencias: selectedEvidenceSafe,
       });
     } catch (error) {
       console.error("Error generando PDF:", error);
-      alert(
+      feedback.error(
         `No fue posible generar el PDF. ${
           error?.message || "Intenta nuevamente."
         }`
@@ -395,6 +475,42 @@ export default function ReportesPanel({
       setGeneratingPdf(false);
     }
   }
+
+
+  async function handleGenerateSummaryPdf() {
+  setGeneratingSummaryPdf(true);
+
+  try {
+    const propiedadSeleccionada = propiedadesDisponibles.find(
+      (propiedad) => propiedad.id === selectedPropertyId
+    );
+
+    const { generarPdfResumenRecorridos } = await import("../../../services/pdfResumenRecorridosService");
+    await generarPdfResumenRecorridos({
+      ejecuciones: ejecucionesSeguras,
+      evidenciasPorEjecucion,
+      propiedadesMap,
+      filtros: {
+        fechaInicio: rangoAplicado.inicio,
+        fechaFin: rangoAplicado.fin,
+        propiedadId: selectedPropertyId,
+        propiedadNombre:
+          selectedPropertyId === "todas"
+            ? "Todas las propiedades"
+            : propiedadSeleccionada?.nombre || "Propiedad",
+      },
+    });
+  } catch (error) {
+    console.error("Error generando resumen:", error);
+    feedback.error(
+      `No fue posible generar el reporte general. ${
+        error?.message || "Intenta nuevamente."
+      }`
+    );
+  } finally {
+    setGeneratingSummaryPdf(false);
+  }
+}
 
   return (
     <section>
@@ -406,103 +522,152 @@ export default function ReportesPanel({
       </p>
 
       <div className="report-filters compact-report-filters">
-        <div>
-          <label className="field-label">
-            <Filter size={15} />
-            Propiedad
-          </label>
+        <div className="report-filter-fields">
+          <div>
+            <label className="field-label">
+              <Filter size={15} />
+              Propiedad
+            </label>
 
-          <select
-            className="text-input"
-            value={selectedPropertyId}
-            onChange={(event) => setSelectedPropertyId(event.target.value)}
+            <select
+              className="text-input"
+              value={selectedPropertyId}
+              onChange={(event) => setSelectedPropertyId(event.target.value)}
+            >
+              <option value="todas">Todas las propiedades</option>
+
+              {propiedadesDisponibles.map((propiedad) => (
+                <option key={propiedad.id} value={propiedad.id}>
+                  {propiedad.nombre}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="field-label">
+              <User size={15} />
+              Empleado
+            </label>
+
+            <select
+              className="text-input"
+              value={selectedGuardiaId}
+              onChange={(event) => setSelectedGuardiaId(event.target.value)}
+            >
+              <option value="todos">Todos los empleados</option>
+
+              {guardiasDisponibles.map((guardia) => (
+                <option key={guardia.id} value={guardia.id}>
+                  {guardia.nombre}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="field-label">
+              <CalendarDays size={15} />
+              Desde
+            </label>
+
+            <input
+              className="text-input"
+              type="date"
+              value={fechaInicio}
+              onChange={(event) => setFechaInicio(event.target.value)}
+            />
+          </div>
+
+          <div>
+            <label className="field-label">
+              <CalendarDays size={15} />
+              Hasta
+            </label>
+
+            <input
+              className="text-input"
+              type="date"
+              value={fechaFin}
+              onChange={(event) => setFechaFin(event.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className="report-filter-actions">
+          <button
+            type="button"
+            className="primary-button report-clear-button"
+            onClick={consultarPeriodo}
+            disabled={reportLoading}
           >
-            <option value="todas">Todas las propiedades</option>
+            <Search size={16} />
+            {reportLoading ? "Consultando..." : "Consultar"}
+          </button>
 
-            {propiedadesDisponibles.map((propiedad) => (
-              <option key={propiedad.id} value={propiedad.id}>
-                {propiedad.nombre}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="field-label">
-            <User size={15} />
-            Empleado
-          </label>
-
-          <select
-            className="text-input"
-            value={selectedGuardiaId}
-            onChange={(event) => setSelectedGuardiaId(event.target.value)}
+          <button
+            type="button"
+            className="secondary-button report-clear-button"
+            onClick={mostrarHoy}
+            disabled={reportLoading}
           >
-            <option value="todos">Todos los empleados</option>
+            <RotateCcw size={16} />
+            Hoy
+          </button>
 
-            {guardiasDisponibles.map((guardia) => (
-              <option key={guardia.id} value={guardia.id}>
-                {guardia.nombre}
-              </option>
-            ))}
-          </select>
-        </div>
+          <button
+            type="button"
+            className="secondary-button report-clear-button"
+            onClick={mostrarMesActual}
+            disabled={reportLoading}
+          >
+            <CalendarDays size={16} />
+            Este mes
+          </button>
 
-        <div>
-          <label className="field-label">
-            <CalendarDays size={15} />
-            Desde
-          </label>
+          <button
+            type="button"
+            className="secondary-button report-clear-button"
+            onClick={handleGenerateSummaryPdf}
+            disabled={generatingSummaryPdf || reportLoading || !ejecucionesSeguras.length}
+          >
+            <FileText size={16} />
+            {generatingSummaryPdf ? "Generando..." : "PDF general"}
+          </button>
 
-          <input
-            className="text-input"
-            type="date"
-            value={fechaInicio}
-            onChange={(event) => setFechaInicio(event.target.value)}
-          />
-        </div>
-
-        <div>
-          <label className="field-label">
-            <CalendarDays size={15} />
-            Hasta
-          </label>
-
-          <input
-            className="text-input"
-            type="date"
-            value={fechaFin}
-            onChange={(event) => setFechaFin(event.target.value)}
-          />
-        </div>
-
-        <button
-          type="button"
-          className="secondary-button report-clear-button"
-          onClick={limpiarFiltros}
-        >
-          <RotateCcw size={16} />
-          Limpiar
-        </button>
-
-        <div className="report-filter-summary">
-          <strong>{ejecucionesSeguras.length}</strong>
-          <span>
-            {ejecucionesSeguras.length === 1
-              ? "recorrido encontrado"
-              : "recorridos encontrados"}
-          </span>
+          <div className="report-filter-summary">
+            <strong>{ejecucionesSeguras.length}</strong>
+            <span>
+              {ejecucionesSeguras.length === 1
+                ? "recorrido encontrado"
+                : "recorridos encontrados"}
+            </span>
+          </div>
         </div>
       </div>
 
+      {reportLoading ? (
+        <DataLoadingState
+          title="Cargando recorridos..."
+          detail="Consultando únicamente el periodo seleccionado. Las evidencias se cargan solo al abrir cada recorrido."
+        />
+      ) : reportError ? (
+        <div className="empty-state">
+          No fue posible cargar recorridos: {reportError?.message || String(reportError)}
+        </div>
+      ) : (
       <div className="reports-grid">
         <div className="reports-list">
           {ejecucionesSeguras.length ? (
             ejecucionesSeguras.map((ejecucion) => {
               const activa = selectedExecution?.id === ejecucion.id;
 
-              const evidenciasCount =
-                evidenciasPorEjecucion.get(ejecucion.id)?.length || 0;
+              const evidenciasCount = Number(
+                ejecucion.totalEvidencias ??
+                  ejecucion.totalFotos ??
+                  ejecucion.puntosCompletados ??
+                  0
+              );
 
               const totalPuntosCard = obtenerTotalPuntos(
                 ejecucion,
@@ -531,6 +696,9 @@ export default function ReportesPanel({
                     <span>{obtenerNombrePropiedad(ejecucion, propiedadesMap)}</span>
 
                     <small>{ejecucion.guardiaNombre || "Sin guardia"}</small>
+                    {ejecucion.motivoCierreAutomatico === "guardia_no_termino" && (
+                      <small>Guardia no terminó</small>
+                    )}
                   </div>
 
                   <div className="report-card-meta">
@@ -577,7 +745,7 @@ export default function ReportesPanel({
                     type="button"
                     className="secondary-button"
                     onClick={handleGeneratePdf}
-                    disabled={generatingPdf}
+                    disabled={generatingPdf || evidenceLoading}
                   >
                     <FileText size={16} />
                     {generatingPdf ? "Generando..." : "Generar PDF"}
@@ -585,7 +753,7 @@ export default function ReportesPanel({
 
                   <span className="admin-role-badge">
                     <ClipboardCheck size={16} />
-                    {selectedExecution.estado || "finalizado"}
+                    {obtenerEstadoVisible(selectedExecution)}
                   </span>
                 </div>
               </div>
@@ -630,55 +798,58 @@ export default function ReportesPanel({
                 </div>
               </div>
 
-              <CatalogTable
-                columns={["Punto", "Comentario", "Hora", "GPS", "Foto"]}
-                rows={[...selectedEvidenceSafe]
-                  .sort(
-                    (a, b) =>
-                      Number(a?.puntoOrden || 0) -
-                      Number(b?.puntoOrden || 0)
-                  )
-                  .map((evidencia, index) => {
-                    const puntoOrden = Number(
-                      evidencia?.puntoOrden || index + 1
-                    );
+              {evidenceLoading ? (
+                <DataLoadingState
+                  title="Cargando evidencias..."
+                  detail="Consultando únicamente los puntos de este recorrido."
+                  compact
+                />
+              ) : evidenceError ? (
+                <div className="empty-state">{evidenceError}</div>
+              ) : (
+                <CatalogTable
+                  columns={["Punto", "Comentario", "Hora", "GPS", "Foto"]}
+                  rows={[...selectedEvidenceSafe]
+                    .sort(
+                      (a, b) =>
+                        Number(a?.puntoOrden || 0) -
+                        Number(b?.puntoOrden || 0)
+                    )
+                    .map((evidencia, index) => {
+                      const puntoOrden = Number(evidencia?.puntoOrden || index + 1);
+                      const puntoNombre =
+                        evidencia?.puntoNombre || evidencia?.puntoId || `Punto ${puntoOrden}`;
+                      const gpsDisponible = tieneUbicacion(evidencia);
+                      const fotoDisponible = tieneFoto(evidencia);
 
-                    const puntoNombre =
-                      evidencia?.puntoNombre ||
-                      evidencia?.puntoId ||
-                      `Punto ${puntoOrden}`;
+                      return [
+                        `${puntoOrden}. ${puntoNombre}`,
+                        evidencia?.comentario || "Sin comentario",
+                        formatDate(evidencia?.capturadaEn || evidencia?.creadaEn),
+                        gpsDisponible ? (
+                          <span className="gps-inline">
+                            <MapPin size={14} />
+                            {Number(evidencia.latitud).toFixed(5)}, {Number(evidencia.longitud).toFixed(5)}
+                          </span>
+                        ) : (
+                          "No disponible"
+                        ),
+                        fotoDisponible ? (
+                          <button
+                            type="button"
+                            className="mini-button"
+                            onClick={() => abrirFoto(evidencia)}
+                          >
+                            <Eye size={14} /> Ver foto
+                          </button>
+                        ) : (
+                          "Sin foto"
+                        ),
+                      ];
+                    })}
+                />
+              )}
 
-                    const gpsDisponible = tieneUbicacion(evidencia);
-                    const fotoDisponible = tieneFoto(evidencia);
-
-                    return [
-                      `${puntoOrden}. ${puntoNombre}`,
-                      evidencia?.comentario || "Sin comentario",
-                      formatDate(evidencia?.capturadaEn || evidencia?.creadaEn),
-                      gpsDisponible ? (
-                        <span className="gps-inline">
-                          <MapPin size={14} />
-                          {Number(evidencia.latitud).toFixed(5)},{" "}
-                          {Number(evidencia.longitud).toFixed(5)}
-                        </span>
-                      ) : (
-                        "No disponible"
-                      ),
-                      fotoDisponible ? (
-                        <button
-                          type="button"
-                          className="mini-button"
-                          onClick={() => abrirFoto(evidencia)}
-                        >
-                          <Eye size={14} />
-                          Ver foto
-                        </button>
-                      ) : (
-                        "Sin foto"
-                      ),
-                    ];
-                  })}
-              />
             </>
           ) : (
             <div className="empty-state">
@@ -687,6 +858,7 @@ export default function ReportesPanel({
           )}
         </div>
       </div>
+      )}
 
       {selectedPhoto && (
         <div className="photo-modal-overlay">
@@ -789,6 +961,23 @@ export default function ReportesPanel({
           </div>
         </div>
       )}
+      {generatingSummaryPdf && (
+        <div className="pdf-loading-overlay">
+          <div className="pdf-loading-modal">
+            <div className="pdf-loading-spinner" />
+
+            <h3>Generando reporte general</h3>
+
+            <p>
+              Estamos preparando el resumen de recorridos con empleados, fechas,
+              horarios, duración y puntos realizados.
+            </p>
+
+            <span>No cierres esta ventana.</span>
+          </div>
+        </div>
+      )}
+
     </section>
   );
 }

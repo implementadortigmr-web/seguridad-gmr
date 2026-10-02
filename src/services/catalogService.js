@@ -7,6 +7,8 @@ import {
   updateDoc,
 } from "firebase/firestore";
 import { db } from "./firebase";
+import { getApp } from "firebase/app";
+import { getFunctions, httpsCallable } from "firebase/functions";
 
 export function crearPropiedad({ codigo, nombre, userId }) {
   return addDoc(collection(db, "propiedades"), {
@@ -50,26 +52,10 @@ export function crearPlantillaRecorrido({ nombre, propiedadId, puntos, userId })
   });
 }
 
-export function guardarPerfilUsuario({
-  uid,
-  nombre,
-  correo,
-  rol,
-  propiedadId,
-  propiedadesPermitidas,
-  activo = true,
-  userId,
-}) {
-  return setDoc(doc(db, "usuarios", uid.trim()), {
-    nombre: nombre.trim(),
-    correo: correo.trim(),
-    rol,
-    propiedadId: propiedadId.trim(),
-    propiedadesPermitidas,
-    activo,
-    actualizadoEn: serverTimestamp(),
-    actualizadoPor: userId,
-  });
+export async function guardarPerfilUsuario(data) {
+  const region = import.meta.env.VITE_ASISTENCIA_FUNCTIONS_REGION || "us-central1";
+  const result = await httpsCallable(getFunctions(getApp(), region), "asistenciaGuardarPerfilUsuario")(data);
+  return result.data;
 }
 
 export function cambiarActivo({ collectionName, id, activoActual, userId }) {

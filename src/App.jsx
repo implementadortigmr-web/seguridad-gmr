@@ -1,125 +1,67 @@
-import { Navigate, Route, Routes } from "react-router-dom";
-import { ShieldCheck } from "lucide-react";
-import { signOut } from "firebase/auth";
-import { AuthProvider, useAuth } from "./context/AuthContext";
-import { auth } from "./services/firebase";
-import { routeForRole } from "./utils/roles";
-import LoginPage from "./pages/LoginPage";
-import GuardiaDashboard from "./pages/guardia/GuardiaDashboard";
-import SupervisorDashboard from "./pages/SupervisorDashboard";
-import AdminDashboard from "./pages/admin/AdminDashboard";
+import { lazy, Suspense, useState } from 'react';
+import { Navigate, Route, Routes } from 'react-router-dom';
+import { Capacitor } from '@capacitor/core';
+import { ShieldCheck } from 'lucide-react';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import MessageBox from './components/MessageBox';
+import { routeForRole } from './utils/roles';
+import LoginPage from './pages/LoginPage';
+const GuardiaDashboard = lazy(() => import('./pages/guardia/GuardiaDashboard'));
+const SupervisorDashboard = lazy(() => import('./pages/SupervisorDashboard'));
+const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'));
+const RHDashboard = lazy(() => import('./pages/rh/RHDashboard'));
+const NominasDashboard = lazy(() => import('./pages/nominas/NominasDashboard'));
+const AsistenciaDashboard = lazy(() => import('./modules/asistencia/AsistenciaDashboard'));
 
 function LoadingPage() {
-  return (
-    <main className="loading-page">
-      <ShieldCheck size={44} />
-      <div className="spinner-ring" />
-      <p>Validando acceso...</p>
-    </main>
-  );
+  return <main className="loading-page"><ShieldCheck size={44} /><div className="spinner-ring" /><p>Validando acceso...</p></main>;
 }
-
-async function logout() {
-  try {
-    await signOut(auth);
-  } catch (error) {
-    console.error("Error cerrando sesión:", error);
-  } finally {
-    try {
-      localStorage.removeItem("usuarioActivo");
-      sessionStorage.clear();
-    } catch {
-      // No hacer nada
-    }
-
-    window.location.hash = "#/";
-    window.location.reload();
+function platformAllows(profile) {
+  const allowed = Capacitor.isNativePlatform() ? ['guardia', 'asistencia'] : ['administrador', 'supervisor', 'rh', 'nominas'];
+  return allowed.includes(profile?.rol);
+}
+function AccesoNoDisponible() {
+  const { logout } = useAuth();
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function salir() {
+    if (busy) return;
+    setBusy(true); setError('');
+    try { await logout(); }
+    catch { setError('No se pudo cerrar sesion. Intenta nuevamente.'); }
+    finally { setBusy(false); }
   }
+  return <main className="loading-page"><ShieldCheck size={40} /><h2>Acceso no disponible aqui</h2>
+    <p>{Capacitor.isNativePlatform() ? 'Administracion y supervision se usan desde el portal web.' : 'La cuenta de guardia o Asistencia se usa desde la APK.'}</p>
+    {error && <MessageBox type="error">{error}</MessageBox>}<button type="button" className="secondary-button" onClick={salir} disabled={busy}>Cerrar sesion y cambiar de cuenta</button></main>;
 }
-
-function normalizarRol(rol) {
-  return String(rol || "").trim().toLowerCase();
-}
-
-function HomeRedirect() {
+function Home() {
   const { profile, loading } = useAuth();
-
   if (loading) return <LoadingPage />;
-  if (!profile) return <LoginPage />;
-
+  if (!profile) return <LoginPage mode={Capacitor.isNativePlatform() ? 'guardia' : 'admin'} />;
+  if (!platformAllows(profile)) return <AccesoNoDisponible />;
   return <Navigate to={routeForRole(profile.rol)} replace />;
 }
-
-function ProtectedRoute({ allowedRoles = [], children }) {
+function ProtectedRoute({ allowedRoles, children }) {
   const { profile, loading } = useAuth();
-
   if (loading) return <LoadingPage />;
   if (!profile) return <Navigate to="/" replace />;
-
-  const rol = normalizarRol(profile.rol);
-  const rolesPermitidos = Array.isArray(allowedRoles) ? allowedRoles : [];
-
-  if (!rolesPermitidos.includes(rol)) {
-    return <Navigate to={routeForRole(rol)} replace />;
-  }
-
-  if (typeof children === "function") {
-    return children({
-      profile,
-      logout,
-    });
-  }
-
+  if (!platformAllows(profile)) return <AccesoNoDisponible />;
+  if (!allowedRoles.includes(profile.rol)) return <Navigate to={routeForRole(profile.rol)} replace />;
   return children;
 }
-
 function AppRoutes() {
-  return (
-    <Routes>
-      <Route path="/" element={<HomeRedirect />} />
-
-      <Route
-        path="/admin"
-        element={
-          <ProtectedRoute allowedRoles={["administrador"]}>
-            {({ profile, logout }) => (
-              <AdminDashboard profile={profile} logout={logout} />
-            )}
-          </ProtectedRoute>
-        }
-      />
-
-      <Route
-        path="/supervisor"
-        element={
-          <ProtectedRoute allowedRoles={["supervisor"]}>
-            {({ profile, logout }) => (
-              <SupervisorDashboard profile={profile} logout={logout} />
-            )}
-          </ProtectedRoute>
-        }
-      />
-
-      <Route
-        path="/guardia"
-        element={
-          <ProtectedRoute allowedRoles={["guardia"]}>
-            {({ profile, logout }) => (
-              <GuardiaDashboard profile={profile} logout={logout} />
-            )}
-          </ProtectedRoute>
-        }
-      />
-
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
-  );
+  return <Routes>
+    <Route path="/" element={<Home />} />
+    <Route path="/admin-login" element={<Home />} />
+    <Route path="/login" element={<Home />} />
+    <Route path="/admin" element={<ProtectedRoute allowedRoles={['administrador']}><AdminDashboard /></ProtectedRoute>} />
+    <Route path="/supervisor" element={<ProtectedRoute allowedRoles={['supervisor']}><SupervisorDashboard /></ProtectedRoute>} />
+    <Route path="/rh" element={<ProtectedRoute allowedRoles={['rh']}><RHDashboard /></ProtectedRoute>} />
+    <Route path="/nominas" element={<ProtectedRoute allowedRoles={['nominas']}><NominasDashboard /></ProtectedRoute>} />
+    <Route path="/guardia" element={<ProtectedRoute allowedRoles={['guardia']}><GuardiaDashboard /></ProtectedRoute>} />
+    <Route path="/asistencia" element={<ProtectedRoute allowedRoles={['asistencia']}><Suspense fallback={<LoadingPage />}><AsistenciaDashboard /></Suspense></ProtectedRoute>} />
+    <Route path="*" element={<Navigate to="/" replace />} />
+  </Routes>;
 }
-
-export default function App() {
-  return (
-    <AuthProvider>
-      <AppRoutes />
-    </AuthProvider>
-  );
-}
+export default function App() { return <AuthProvider><Suspense fallback={<LoadingPage />}><AppRoutes /></Suspense></AuthProvider>; }

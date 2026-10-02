@@ -1,0 +1,34 @@
+// Insert INSIDE match /b/{bucket}/o. Legacy allow rules must not grant access to asistencia/**.
+function asiPerfil() {
+  return firestore.get(/databases/(default)/documents/usuarios/$(request.auth.uid)).data;
+}
+function asiActivo() { return request.auth != null && asiPerfil().activo == true; }
+function asiPropiedad(id) {
+  let p = asiPerfil();
+  let permisos = p.get('propiedadesPermitidas', []);
+  return asiActivo() && (
+    p.rol == 'administrador'
+    || (p.rol == 'asistencia' && permisos == [id]
+      && firestore.get(/databases/(default)/documents/configuracionAsistencia/mexico).data.propiedadId == id)
+    || (p.rol in ['guardia', 'supervisor'] && p.get('modulosPermitidos', []).hasAny(['asistencia'])
+      && (permisos.hasAny(['*', id]) || (permisos.size() == 0 && p.get('propiedadId', '') == id)))
+  );
+}
+match /asistencia/{propiedadId}/{empleadoId}/{uid}/{nombreArchivo} {
+  allow get: if asiPropiedad(propiedadId)
+    && (asiPerfil().rol in ['administrador', 'supervisor'] || request.auth.uid == uid);
+  allow list: if false;
+  allow create: if asiPropiedad(propiedadId)
+    && asiPerfil().rol in ['administrador', 'guardia', 'asistencia']
+    && request.auth.uid == uid
+    && request.resource.size > 0 && request.resource.size <= 2 * 1024 * 1024
+    && request.resource.contentType == 'image/jpeg'
+    && nombreArchivo == request.resource.metadata.solicitudId + '.jpg'
+    && request.resource.metadata.registradoPor == uid
+    && request.resource.metadata.empleadoId == empleadoId
+    && request.resource.metadata.propiedadId == propiedadId;
+  // Only two Firestore documents per Storage request: profile + Mexico configuration.
+  // The callable confirms that empleadoId belongs to this property before recording attendance.
+  // Uploaded evidence is immutable. Retries reuse the existing object.
+  allow update, delete: if false;
+}

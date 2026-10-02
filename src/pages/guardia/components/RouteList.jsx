@@ -5,12 +5,40 @@ function safeArray(value) {
 }
 
 function normalizarGrupos(groupedRoutes) {
+  if (!groupedRoutes) return [];
+
   if (Array.isArray(groupedRoutes)) {
-    return groupedRoutes;
+    return groupedRoutes
+      .map((grupo, index) => {
+        const rutas =
+          grupo.rutas ||
+          grupo.routes ||
+          grupo.recorridos ||
+          grupo.items ||
+          [];
+
+        return {
+          id: grupo.id || grupo.propiedadId || `grupo_${index}`,
+          propiedadNombre:
+            grupo.propiedadNombre ||
+            grupo.nombre ||
+            grupo.propiedad ||
+            grupo.titulo ||
+            "Propiedad",
+          rutas: safeArray(rutas),
+        };
+      })
+      .filter((grupo) => grupo.rutas.length > 0);
   }
 
-  if (groupedRoutes && typeof groupedRoutes === "object") {
-    return Object.values(groupedRoutes);
+  if (typeof groupedRoutes === "object") {
+    return Object.entries(groupedRoutes)
+      .map(([propiedadNombre, rutas], index) => ({
+        id: `grupo_${index}_${propiedadNombre}`,
+        propiedadNombre,
+        rutas: safeArray(rutas),
+      }))
+      .filter((grupo) => grupo.rutas.length > 0);
   }
 
   return [];
@@ -19,79 +47,74 @@ function normalizarGrupos(groupedRoutes) {
 export default function RouteList({ groupedRoutes = [], onStartRoute }) {
   const grupos = normalizarGrupos(groupedRoutes);
 
-  if (grupos.length === 0) {
+  if (!grupos.length) {
     return (
-      <div className="empty-state-card">
+      <div className="guardia-empty-card">
         <h3>No hay recorridos disponibles</h3>
         <p>
-          No se encontraron recorridos activos para las propiedades asignadas a
-          este usuario.
+          No se encontraron recorridos activos para las propiedades asignadas.
         </p>
       </div>
     );
   }
 
+  function handleStart(route) {
+    if (!route?.id) {
+      alert("Este recorrido no tiene ID. Revisa la plantilla del recorrido.");
+      return;
+    }
+
+    if (typeof onStartRoute !== "function") {
+      alert("No se encontró la función para iniciar recorrido.");
+      return;
+    }
+
+    onStartRoute(route);
+  }
+
   return (
-    <div className="route-list-wrapper">
-      {grupos.map((grupo, groupIndex) => {
-        const recorridos = safeArray(grupo?.recorridos);
+    <div className="route-list">
+      {grupos.map((grupo) => (
+        <section className="property-routes-card" key={grupo.id}>
+          <p className="eyebrow">Propiedad</p>
+          <h2>{grupo.propiedadNombre}</h2>
 
-        return (
-          <div
-            key={grupo?.propiedadId || grupo?.propiedadNombre || groupIndex}
-            className="route-property-group"
-          >
-            <div className="route-property-header">
-              <span>Propiedad</span>
-              <h2>{grupo?.propiedadNombre || "Propiedad"}</h2>
-            </div>
+          <div className="route-cards-list">
+            {grupo.rutas.map((route) => {
+              const puntos =
+                route.puntosTotales ||
+                route.totalPuntos ||
+                safeArray(route.puntos).length ||
+                0;
 
-            {recorridos.length === 0 ? (
-              <div className="empty-state-card">
-                <p>No hay recorridos activos en esta propiedad.</p>
-              </div>
-            ) : (
-              <div className="route-cards-grid">
-                {recorridos.map((route, routeIndex) => {
-                  const puntos = safeArray(route?.puntos);
+              return (
+                <article className="route-card" key={route.id}>
+                  <div className="route-card-info">
+                    <h3>{route.nombre || route.recorridoNombre || "Recorrido"}</h3>
 
-                  return (
-                    <article
-                      key={route?.id || `${groupIndex}-${routeIndex}`}
-                      className="route-card"
-                    >
-                      <div>
-                        <h3>{route?.nombre || "Recorrido"}</h3>
+                    <p>
+                      {route.propiedadNombre ||
+                        route.propiedad ||
+                        grupo.propiedadNombre}
+                    </p>
 
-                        <p>
-                          {route?.propiedadNombre ||
-                            grupo?.propiedadNombre ||
-                            "Propiedad"}
-                        </p>
+                    <strong>{puntos} punto(s)</strong>
+                  </div>
 
-                        <span>{puntos.length} punto(s)</span>
-                      </div>
-
-                      <button
-                        type="button"
-                        className="primary-button"
-                        onClick={() => {
-                          if (typeof onStartRoute === "function") {
-                            onStartRoute(route);
-                          }
-                        }}
-                      >
-                        <PlayCircle size={18} />
-                        Iniciar
-                      </button>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
+                  <button
+                    type="button"
+                    className="primary-button route-start-button"
+                    onClick={() => handleStart(route)}
+                  >
+                    <PlayCircle size={18} />
+                    Iniciar
+                  </button>
+                </article>
+              );
+            })}
           </div>
-        );
-      })}
+        </section>
+      ))}
     </div>
   );
 }

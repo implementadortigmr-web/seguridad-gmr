@@ -1,5 +1,6 @@
 import { Copy, RefreshCcw, Smartphone } from "lucide-react";
 import { useEffect, useState } from "react";
+import MessageBox from "../../../components/MessageBox";
 
 const DEVICE_KEY = "seguridad_gmr_device_id";
 
@@ -104,7 +105,7 @@ export default function UnauthorizedDeviceCard({
         app de rondines.
       </p>
 
-      {message && <div className="device-warning-message">{message}</div>}
+      {message && <MessageBox type="warning">{message}</MessageBox>}
 
       <div className="device-code-box">
         <span>Código del dispositivo</span>

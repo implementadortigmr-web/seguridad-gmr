@@ -1,0 +1,162 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function estaAutenticado() {
+      return request.auth != null;
+    }
+
+    function perfilActual() {
+      return firestore.get(
+        /databases/(default)/documents/usuarios/$(request.auth.uid)
+      ).data;
+    }
+
+    function usuarioActivo() {
+      return estaAutenticado()
+        && perfilActual().activo == true;
+    }
+
+    function esAdministrador() {
+      return usuarioActivo()
+        && perfilActual().rol == 'administrador';
+    }
+
+    function esSupervisor() {
+      return usuarioActivo()
+        && perfilActual().rol == 'supervisor';
+    }
+
+    function esRH() {
+      return usuarioActivo()
+        && perfilActual().rol == 'rh';
+    }
+
+    function esNominas() {
+      return usuarioActivo()
+        && perfilActual().rol == 'nominas';
+    }
+
+    function esGuardia() {
+      return usuarioActivo()
+        && perfilActual().rol == 'guardia';
+    }
+
+    function esAsistencia() {
+      return usuarioActivo()
+        && perfilActual().rol == 'asistencia';
+    }
+
+
+    function tienePermisosPersonalizados() {
+      return usuarioActivo()
+        && perfilActual().keys().hasAny(['permisosSistema'])
+        && perfilActual().permisosSistema is list;
+    }
+
+    function permisoBaseRol(permiso) {
+      return esAdministrador()
+        || (esRH() && permiso in ['reportes.eventuales', 'reportes.practicantes', 'reportes.mexico'])
+        || (esNominas() && permiso == 'reportes.mexico')
+        || (esSupervisor() && permiso in ['reportes.recorridos', 'reportes.incidencias'])
+        || (esGuardia() && (
+          permiso in ['operacion.recorridos', 'operacion.incidencias']
+          || (perfilActual().modulosPermitidos is list
+            && perfilActual().modulosPermitidos.hasAny(['asistencia'])
+            && permiso == 'operacion.asistencia')
+        ))
+        || (esAsistencia() && permiso == 'operacion.asistencia');
+    }
+
+    function permisoPermitidoRol(permiso) {
+      return esAdministrador()
+        || (esRH() && permiso in [
+          'configuracion.personal', 'reportes.eventuales', 'reportes.practicantes', 'reportes.mexico'
+        ])
+        || (esNominas() && permiso == 'reportes.mexico')
+        || (esSupervisor() && permiso in ['reportes.recorridos', 'reportes.incidencias'])
+        || (esGuardia() && permiso in ['operacion.recorridos', 'operacion.incidencias', 'operacion.asistencia'])
+        || (esAsistencia() && permiso == 'operacion.asistencia');
+    }
+
+    function tienePermisoSistema(permiso) {
+      return usuarioActivo()
+        && (
+          esAdministrador()
+          || (tienePermisosPersonalizados() && permisoPermitidoRol(permiso) && perfilActual().permisosSistema.hasAny([permiso]))
+          || (!tienePermisosPersonalizados() && permisoBaseRol(permiso))
+        );
+    }
+
+    function puedeLeerFotoAsistencia(propiedadId) {
+      return puedeVerPropiedad(propiedadId)
+        && (
+          esAdministrador()
+          || tienePermisoSistema('reportes.eventuales')
+          || tienePermisoSistema('reportes.practicantes')
+          || tienePermisoSistema('reportes.mexico')
+        );
+    }
+
+    function puedeVerPropiedad(propiedadId) {
+      return esAdministrador()
+        || perfilActual().propiedadesPermitidas.hasAny(['*'])
+        || perfilActual().propiedadesPermitidas.hasAny([propiedadId])
+        || perfilActual().propiedadId == propiedadId;
+    }
+
+    function esImagenValida3MB() {
+      return request.resource.size < 3 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    match /evidencias/{propiedadId}/{guardiaId}/{ejecucionId}/{archivoId} {
+      allow read: if usuarioActivo()
+        && (
+          esAdministrador()
+          || (esSupervisor() && tienePermisoSistema('reportes.recorridos'))
+          || (request.auth.uid == guardiaId && tienePermisoSistema('operacion.recorridos'))
+        );
+
+      allow create, update: if esGuardia()
+        && tienePermisoSistema('operacion.recorridos')
+        && request.auth.uid == guardiaId
+        && esImagenValida3MB();
+
+      allow delete: if false;
+    }
+
+    match /incidencias/{propiedadId}/{guardiaId}/{incidenciaId}/{archivo=**} {
+      allow read: if usuarioActivo()
+        && (
+          esAdministrador()
+          || (esSupervisor() && tienePermisoSistema('reportes.incidencias'))
+          || (request.auth.uid == guardiaId && tienePermisoSistema('operacion.incidencias'))
+        );
+
+      allow write: if esGuardia()
+        && tienePermisoSistema('operacion.incidencias')
+        && request.auth.uid == guardiaId
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+   match /asistencia/{propiedadId}/{empleadoId}/{operadorId}/{archivoId} {
+  allow read: if usuarioActivo()
+    && puedeLeerFotoAsistencia(propiedadId);
+
+  allow create: if usuarioActivo()
+    && (
+      (esGuardia() && tienePermisoSistema('operacion.asistencia'))
+      || esAsistencia()
+    )
+    && request.auth.uid == operadorId
+    && puedeVerPropiedad(propiedadId)
+    && request.resource.size < 2 * 1024 * 1024
+    && request.resource.contentType == 'image/jpeg';
+
+  allow update, delete: if false;
+}
+  }
+}

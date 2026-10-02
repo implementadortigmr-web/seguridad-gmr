@@ -8,6 +8,7 @@ import {
 import { db } from "./firebase";
 import { subirFotoEvidencia } from "./storageService";
 
+
 const COLLECTION_EJECUCIONES = "ejecucionesRecorridos";
 const COLLECTION_EVIDENCIAS = "evidenciasPuntos";
 
@@ -222,7 +223,7 @@ export async function subirRecorridoConFotos({
           mensaje: `Sincronizando ${evidenciasProcesadas}/${evidenciasValidas.length} evidencias...`,
         });
       }
-
+      
       return {
         id: evidenciaId,
         data: evidenciaFirestore,

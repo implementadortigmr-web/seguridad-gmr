@@ -1,15 +1,17 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  AlertCircle,
   ChevronRight,
   LoaderCircle,
   ShieldCheck,
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import MessageBox from "../components/MessageBox";
+import { routeForRole } from "../utils/roles";
 
 const AUTH_DOMAIN = "seguridadgmr.local";
 
-function normalizarUsuarioLogin(valor = "") {
+function normalizarUsuarioGuardia(valor = "") {
   const limpio = String(valor || "")
     .trim()
     .normalize("NFD")
@@ -25,7 +27,7 @@ function normalizarUsuarioLogin(valor = "") {
   return `${limpio}@${AUTH_DOMAIN}`;
 }
 
-function normalizarPasswordLogin(valor = "") {
+function normalizarPasswordGuardia(valor = "") {
   const limpio = String(valor || "").trim();
 
   if (/^\d{4}$/.test(limpio)) {
@@ -59,8 +61,11 @@ function obtenerMensajeError(error) {
   return message || "No fue posible iniciar sesión.";
 }
 
-export default function LoginPage() {
-  const { login, authError } = useAuth();
+export default function LoginPage({ mode = "guardia" }) {
+  const { login, authError, profile } = useAuth();
+  const navigate = useNavigate();
+
+  const isAdminMode = mode === "admin";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -68,14 +73,20 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
 
+  useEffect(() => {
+    if (!profile?.rol) return;
+
+    navigate(routeForRole(profile.rol), { replace: true });
+  }, [profile, navigate]);
+
   async function handleSubmit(event) {
     event.preventDefault();
 
     const usuarioLimpio = email.trim();
-    const passwordLimpio = password.trim();
+    const passwordLimpio = password;
 
     if (!usuarioLimpio) {
-      setFormError("Ingresa tu usuario.");
+      setFormError(isAdminMode ? "Ingresa tu correo." : "Ingresa tu usuario.");
       return;
     }
 
@@ -88,8 +99,13 @@ export default function LoginPage() {
     setSubmitting(true);
 
     try {
-      const emailFinal = normalizarUsuarioLogin(usuarioLimpio);
-      const passwordFinal = normalizarPasswordLogin(passwordLimpio);
+      const emailFinal = isAdminMode
+        ? usuarioLimpio.toLowerCase()
+        : normalizarUsuarioGuardia(usuarioLimpio);
+
+      const passwordFinal = isAdminMode
+        ? passwordLimpio
+        : normalizarPasswordGuardia(passwordLimpio);
 
       await login(emailFinal, passwordFinal);
     } catch (error) {
@@ -109,39 +125,49 @@ export default function LoginPage() {
 
         <p className="eyebrow">Grupo México Real</p>
 
-        <h1>Rondines de Seguridad</h1>
+        <h1>
+          {isAdminMode ? "Panel Administrativo" : "Rondines de Seguridad"}
+        </h1>
 
         <p className="login-description">
-          Registro de recorridos, evidencias fotográficas y seguimiento por
-          punto de revisión.
+          {isAdminMode
+            ? "Acceso para administración, supervisión y consulta de reportes."
+            : "Registro de recorridos, evidencias fotográficas y seguimiento por punto de revisión."}
         </p>
       </section>
 
       <section className="login-card">
         <h2>Iniciar sesión</h2>
 
-        <p className="muted">Ingresa con tu usuario y clave de 4 dígitos.</p>
+        <p className="muted">
+          {isAdminMode
+            ? "Ingresa con tu correo y contraseña."
+            : "Ingresa con tu usuario y contraseña o clave asignada."}
+        </p>
 
         {(formError || authError) && (
-          <div className="login-error">
-            <AlertCircle size={18} />
-            <span>{formError || authError}</span>
-          </div>
+          <MessageBox type="error">{formError || authError}</MessageBox>
         )}
 
         <form className="auth-form" onSubmit={handleSubmit}>
           <label className="field-label" htmlFor="usuario">
-            Usuario
+            {isAdminMode ? "Correo electrónico" : "Usuario"}
           </label>
 
           <input
             id="usuario"
             className="text-input"
-            type="text"
+            type={isAdminMode ? "email" : "text"}
             value={email}
-            onChange={(event) => setEmail(event.target.value.toUpperCase())}
-            placeholder="Ej. MARAIZA"
-            autoCapitalize="characters"
+            onChange={(event) =>
+              setEmail(
+                isAdminMode
+                  ? event.target.value
+                  : event.target.value.toUpperCase()
+              )
+            }
+            placeholder={isAdminMode ? "admin@empresa.com" : "Ej. MARAIZA"}
+            autoCapitalize={isAdminMode ? "none" : "characters"}
             autoComplete="username"
             autoCorrect="off"
             spellCheck="false"
@@ -156,10 +182,10 @@ export default function LoginPage() {
             id="contrasena"
             className="text-input"
             type="password"
-            inputMode="numeric"
+            inputMode="text"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            placeholder="Clave de 4 dígitos"
+            placeholder="Contraseña o clave asignada"
             autoComplete="current-password"
             required
           />
@@ -178,6 +204,8 @@ export default function LoginPage() {
             )}
           </button>
         </form>
+
+        
       </section>
     </main>
   );

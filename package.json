@@ -10,10 +10,12 @@
     "preview": "vite preview",
     "sync:android": "cap sync android",
     "open:android": "cap open android",
-    "build:android": "vite build && cap sync android"
+    "build:android": "vite build && cap sync android",
+    "test:asistencia": "node --test tests/asistencia.test.mjs tests/asistencia-backend.test.mjs tests/eventuales-nomina.test.mjs tests/planeacion.test.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.0",
+    "@capacitor/app": "^8.1.1",
     "@capacitor/camera": "^8.2.1",
     "@capacitor/core": "^8.4.0",
     "@capacitor/device": "^8.0.2",
@@ -27,7 +29,9 @@
     "lucide-react": "^1.17.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "react-router-dom": "^7.16.0"
+    "react-router-dom": "^7.16.0",
+    "qrcode.react": "^4.2.0",
+    "@yudiel/react-qr-scanner": "^2.5.1"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.4.0",

@@ -5,7 +5,8 @@ export default defineConfig({
   plugins: [react()],
   base: "./",
   build: {
-    sourcemap: true,
-    minify: false,
+    // Diagnostics are opt-in, not part of every production deployment.
+    sourcemap: process.env.GMR_BUILD_DEBUG === "1",
+    minify: true,
   },
 });

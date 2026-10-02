@@ -1,204 +1,182 @@
-import { useEffect, useMemo, useState } from "react";
-import { collection, getDocs } from "firebase/firestore";
-import { LogOut, RefreshCcw } from "lucide-react";
-import { db } from "../services/firebase";
-import ReportesPanel from "./admin/reportes/ReportesPanel";
-import "./supervisor.css";
+import { useAuth } from '../context/AuthContext';
+import MessageBox from '../components/MessageBox';
+import { PERMISOS, tienePermiso } from '../../shared/perfilesAcceso';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
+import { signOut } from 'firebase/auth';
+import { AlertCircle, BarChart3, FileClock, LogOut, RefreshCcw } from 'lucide-react';
+import { auth, db } from '../services/firebase';
+import './supervisor.css';
 
-function safeArray(value) {
-  return Array.isArray(value) ? value : [];
-}
+const ReportesPanel = lazy(() => import('./admin/reportes/ReportesPanel'));
+const IncidenciasRevisionPanel = lazy(() => import('./admin/incidencias/IncidenciasRevisionPanel'));
+const ReporteAsistenciaTipoPanel = lazy(() => import('./admin/reportes/ReporteAsistenciaTipoPanel'));
+
+function safeArray(value) { return Array.isArray(value) ? value : []; }
 
 function normalizarPermisos(profile) {
   if (!profile) return [];
-
-  if (
-    Array.isArray(profile.propiedadesPermitidas) &&
-    profile.propiedadesPermitidas.length > 0
-  ) {
+  if (Array.isArray(profile.propiedadesPermitidas) && profile.propiedadesPermitidas.length > 0) {
     return profile.propiedadesPermitidas.filter(Boolean);
   }
-
-  if (
-    Array.isArray(profile.propiedadesAsignadas) &&
-    profile.propiedadesAsignadas.length > 0
-  ) {
+  if (Array.isArray(profile.propiedadesAsignadas) && profile.propiedadesAsignadas.length > 0) {
     return profile.propiedadesAsignadas.filter(Boolean);
   }
-
-  if (profile.propiedadId === "todas") return ["*"];
-
-  if (profile.propiedadId && profile.propiedadId !== "todas") {
-    return [profile.propiedadId];
-  }
-
+  if (profile.propiedadId === 'todas') return ['*'];
+  if (profile.propiedadId && profile.propiedadId !== 'todas') return [profile.propiedadId];
   return [];
 }
 
-function puedeVerPropiedad(profile, propiedadId) {
-  const permisos = normalizarPermisos(profile);
-
-  if (permisos.includes("*")) return true;
-
-  if (!permisos.length) return true;
-
-  return permisos.includes(propiedadId);
-}
-
-function obtenerNombrePropiedad(propiedadId, propiedadNombre, propiedadesMap) {
-  if (propiedadNombre && propiedadNombre !== propiedadId) {
-    return propiedadNombre;
-  }
-
-  return propiedadesMap.get(propiedadId) || propiedadId || "Sin propiedad";
-}
-
-export default function SupervisorDashboard({ profile, logout }) {
-  const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState("");
-  const [ejecuciones, setEjecuciones] = useState([]);
-  const [evidencias, setEvidencias] = useState([]);
-  const [propiedades, setPropiedades] = useState([]);
-
-  const safeLogout =
-    typeof logout === "function"
-      ? logout
-      : () => {
-          window.location.hash = "#/";
-          window.location.reload();
-        };
-
-  const permisosTexto = useMemo(() => {
-    const permisos = normalizarPermisos(profile);
-
-    if (permisos.includes("*")) return "Todas las propiedades";
-
-    if (!permisos.length) return "Todas las propiedades";
-
-    return `${permisos.length} propiedad(es)`;
+export default function SupervisorDashboard() {
+  const { profile } = useAuth();
+  const availableViews = useMemo(() => {
+    const views = [];
+    if (tienePermiso(profile, PERMISOS.REPORTES_RECORRIDOS)) views.push('recorridos');
+    if (tienePermiso(profile, PERMISOS.REPORTES_INCIDENCIAS)) views.push('incidencias');
+    if (tienePermiso(profile, PERMISOS.REPORTES_EVENTUALES)) views.push('eventuales');
+    return views;
   }, [profile]);
 
-  async function loadData() {
-    setLoading(true);
-    setMessage("");
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState('');
+  const [activeView, setActiveView] = useState('');
+  const [propiedades, setPropiedades] = useState([]);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const requestCounter = useRef(0);
 
+  useEffect(() => {
+    if (!availableViews.length) setActiveView('');
+    else if (!availableViews.includes(activeView)) setActiveView(availableViews[0]);
+  }, [availableViews, activeView]);
+
+  const permisos = useMemo(() => normalizarPermisos(profile), [profile]);
+
+  async function handleLogout() {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    setMessage('');
     try {
-      const [propiedadesSnap, ejecucionesSnap, evidenciasSnap] =
-        await Promise.all([
-          getDocs(collection(db, "propiedades")),
-          getDocs(collection(db, "ejecucionesRecorridos")),
-          getDocs(collection(db, "evidenciasPuntos")),
-        ]);
-
-      const propiedadesData = propiedadesSnap.docs.map((documento) => ({
-        id: documento.id,
-        ...documento.data(),
-      }));
-
-      const propiedadesMap = new Map();
-
-      propiedadesData.forEach((propiedad) => {
-        propiedadesMap.set(
-          propiedad.id,
-          propiedad.nombre || propiedad.codigo || propiedad.id
-        );
-      });
-
-      const ejecucionesData = ejecucionesSnap.docs
-        .map((documento) => {
-          const data = documento.data() || {};
-
-          const propiedadNombre = obtenerNombrePropiedad(
-            data.propiedadId,
-            data.propiedadNombre,
-            propiedadesMap
-          );
-
-          return {
-            id: documento.id,
-            ...data,
-            propiedadNombre,
-          };
-        })
-        .filter((ejecucion) =>
-          puedeVerPropiedad(profile, ejecucion.propiedadId)
-        );
-
-      const ejecucionesIds = new Set(ejecucionesData.map((item) => item.id));
-
-      const evidenciasData = evidenciasSnap.docs
-        .map((documento) => ({
-          id: documento.id,
-          ...documento.data(),
-        }))
-        .filter((evidencia) => ejecucionesIds.has(evidencia.ejecucionId));
-
-      setPropiedades(propiedadesData);
-      setEjecuciones(ejecucionesData);
-      setEvidencias(evidenciasData);
+      await signOut(auth);
     } catch (error) {
-      console.error("Error cargando supervisión:", error);
-
-      setMessage(
-        error?.code === "permission-denied"
-          ? "No tienes permiso para consultar la información de supervisión."
-          : error?.message || "No fue posible cargar la información."
-      );
+      console.error('Error cerrando sesion:', error);
+      setMessage('No fue posible cerrar sesion. Intenta nuevamente.');
     } finally {
-      setLoading(false);
+      setLoggingOut(false);
     }
   }
 
+  const permisosTexto = useMemo(() => {
+    if (permisos.includes('*')) return 'Todas las propiedades';
+    if (!permisos.length) return 'Sin propiedades asignadas';
+    return `${permisos.length} propiedad(es)`;
+  }, [permisos]);
+
+  const loadProperties = useCallback(async () => {
+    const ticket = ++requestCounter.current;
+    setLoading(true);
+    setMessage('');
+
+    try {
+      const todos = permisos.includes('*');
+      const propertyDocs = todos
+        ? (await getDocs(collection(db, 'propiedades'))).docs
+        : await Promise.all(permisos.map((id) => getDoc(doc(db, 'propiedades', id))));
+
+      if (ticket !== requestCounter.current) return;
+
+      setPropiedades(
+        propertyDocs
+          .filter((item) => item.exists())
+          .map((item) => ({ ...item.data(), id: item.id }))
+          .sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es'))
+      );
+    } catch (error) {
+      if (ticket !== requestCounter.current) return;
+      setPropiedades([]);
+      setMessage(error?.message || 'No fue posible cargar las propiedades de supervisión.');
+    } finally {
+      if (ticket === requestCounter.current) setLoading(false);
+    }
+  }, [permisos]);
+
   useEffect(() => {
-    loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    loadProperties();
+    return () => { requestCounter.current += 1; };
+  }, [loadProperties]);
+
+  const title = activeView === 'recorridos'
+    ? 'Reporte de recorridos'
+    : activeView === 'incidencias'
+      ? 'Control de incidencias'
+      : activeView === 'eventuales'
+        ? 'Eventuales y asistencia'
+        : 'Sin módulos asignados';
+
+  const necesitaPropiedades = ['recorridos', 'incidencias'].includes(activeView);
 
   return (
     <main className="supervisor-page">
       <header className="supervisor-header">
         <div>
           <span className="supervisor-kicker">Panel de supervisión</span>
-          <h1>Control de recorridos</h1>
-          <p>
-            {profile?.nombre || profile?.correo || "Supervisor"} ·{" "}
-            {permisosTexto}
-          </p>
+          <h1>{title}</h1>
+          <p>{profile?.nombre || profile?.correo || 'Supervisor'} · {permisosTexto}</p>
         </div>
-
         <div className="supervisor-header-actions">
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={loadData}
-            disabled={loading}
-          >
-            <RefreshCcw size={16} />
-            Actualizar
-          </button>
-
-          <button type="button" className="secondary-button" onClick={safeLogout}>
-            <LogOut size={16} />
-            Salir
+          {necesitaPropiedades && (
+            <button type="button" className="secondary-button" onClick={loadProperties} disabled={loading}>
+              <RefreshCcw size={16} />Actualizar propiedades
+            </button>
+          )}
+          <button type="button" className="secondary-button" onClick={handleLogout} disabled={loggingOut}>
+            <LogOut size={18} />{loggingOut ? 'Saliendo...' : 'Salir'}
           </button>
         </div>
       </header>
 
-      {message && <div className="supervisor-message">{message}</div>}
+      {message && <MessageBox>{message}</MessageBox>}
 
-      {loading ? (
-        <section className="supervisor-loading">
-          <div className="pdf-loading-spinner" />
-          <p>Cargando recorridos...</p>
-        </section>
-      ) : (
-     <div className="supervisor-report-wrapper">
-        <ReportesPanel
-          ejecuciones={safeArray(ejecuciones)}
-          evidencias={safeArray(evidencias)}
-          propiedades={safeArray(propiedades)}
-        />
+      <div className="supervisor-view-tabs">
+        {availableViews.includes('recorridos') && (
+          <button type="button" className={activeView === 'recorridos' ? 'active' : ''} onClick={() => setActiveView('recorridos')}>
+            <BarChart3 size={17} />Reporte de recorridos
+          </button>
+        )}
+        {availableViews.includes('incidencias') && (
+          <button type="button" className={activeView === 'incidencias' ? 'active' : ''} onClick={() => setActiveView('incidencias')}>
+            <AlertCircle size={17} />Incidencias
+          </button>
+        )}
+        {availableViews.includes('eventuales') && (
+          <button type="button" className={activeView === 'eventuales' ? 'active' : ''} onClick={() => setActiveView('eventuales')}>
+            <FileClock size={17} />Eventuales y asistencia
+          </button>
+        )}
       </div>
+
+      {!activeView ? (
+        <section className="supervisor-loading"><p>Esta cuenta no tiene módulos de supervisión asignados.</p></section>
+      ) : loading && necesitaPropiedades ? (
+        <section className="supervisor-loading"><div className="pdf-loading-spinner" /><p>Cargando propiedades...</p></section>
+      ) : (
+        <div className="supervisor-report-wrapper">
+          <Suspense fallback={<p role="status">Cargando sección...</p>}>
+            {activeView === 'recorridos' ? (
+              <ReportesPanel
+                propiedades={safeArray(propiedades)}
+                propiedadesPermitidas={permisos}
+              />
+            ) : activeView === 'eventuales' ? (
+              <ReporteAsistenciaTipoPanel tipoPersonal="eventual" />
+            ) : (
+              <IncidenciasRevisionPanel
+                profile={profile}
+                propiedades={safeArray(propiedades)}
+                permisosPropiedades={permisos}
+              />
+            )}
+          </Suspense>
+        </div>
       )}
     </main>
   );

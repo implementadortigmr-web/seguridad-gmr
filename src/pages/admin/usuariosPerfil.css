@@ -1,0 +1,4 @@
+.users-profile-panel .users-form > div { min-width: 0; }
+.users-profile-panel .users-form .field-label { display: block; margin-bottom: 8px; font-weight: 700; }
+.users-profile-panel .users-form .text-input { display: block; width: 100%; min-width: 0; margin-bottom: 0; }
+.users-profile-panel .info-box { align-self: start; line-height: 1.5; }

@@ -1,0 +1,139 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "asistenciaPersonal",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "propiedadId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "nombre",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "asistenciaJornadas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "propiedadId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "fechaJornada",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "asistenciaJornadas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "propiedadId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "empleadoId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "fechaJornada",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "asistenciaJornadas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "propiedadId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "estado",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "fechaJornada",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "asistenciaJornadas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "propiedadId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "empleadoId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "estado",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "fechaJornada",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "asistenciaJornadas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "propiedadId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "estado",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "entradaEn",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "asistenciaJornadas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "estado",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "entradaEn",
+          "order": "ASCENDING"
+        }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
