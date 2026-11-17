@@ -29,6 +29,7 @@ const AccesosPanel = lazy(() => import('./AccesosPanel'));
 const PuestosPanel = lazy(() => import('./PuestosPanel'));
 const HorariosPanel = lazy(() => import('./HorariosPanel'));
 const PlaneacionPersonalPanel = lazy(() => import('./PlaneacionPersonalPanel'));
+const RequisicionesPersonalPanel = lazy(() => import('./RequisicionesPersonalPanel'));
 const PlantillasRecorridosPanel = lazy(() => import('./PlantillasRecorridosPanel'));
 const PersonalPanel = lazy(() => import('./PersonalPanel'));
 const DispositivosPanel = lazy(() => import('./DispositivosPanel'));
@@ -62,6 +63,7 @@ const GROUPS = [
       { id: 'personal', label: 'Personal', icon: <ClipboardList size={17} /> },
       { id: 'puestos', label: 'Puestos', icon: <BriefcaseBusiness size={17} /> },
       { id: 'horarios', label: 'Horarios', icon: <Clock3 size={17} /> },
+      { id: 'requisiciones', label: 'Requisiciones de personal', icon: <ClipboardList size={17} /> },
       { id: 'planeacion', label: 'Planeación de personal', icon: <CalendarRange size={17} /> },
     ],
   },
@@ -164,6 +166,9 @@ export default function AdminDashboard() {
 
       case 'horarios':
         return <HorariosPanel setMessage={setMessage} />;
+
+      case 'requisiciones':
+        return <RequisicionesPersonalPanel />;
 
       case 'planeacion':
         return <PlaneacionPersonalPanel propiedades={propiedades} setMessage={setMessage} />;

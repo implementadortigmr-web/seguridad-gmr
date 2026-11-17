@@ -158,3 +158,24 @@ test('guardia prepara recorrido local antes de cerrar sesion y no restaura uno v
   assert.match(dashboard, /guardia\.prepareLogout/);
   assert.match(report, /Guardia no terminó/);
 });
+
+test('planeacion semanal no muestra la nota informativa redundante', () => {
+  const panel = read('src/pages/admin/PlaneacionPersonalPanel.jsx');
+  assert.doesNotMatch(panel, /Planea necesidades y asignaciones por puesto/);
+  assert.doesNotMatch(panel, /pren[oó]mina es una estimaci[oó]n/);
+});
+
+test('tarjetas de planeacion limitan la vista nominal a tres personas', () => {
+  const panel = read('src/pages/admin/PlaneacionPersonalPanel.jsx');
+  assert.match(panel, /assigned\.slice\(0, 3\)/);
+  assert.match(panel, /assigned\.length - 3/);
+  assert.match(panel, /planning-assigned-more/);
+});
+
+test('estilos mantienen reporte semanal dentro del panel y compactan planeacion', () => {
+  const css = read('src/index.css');
+  assert.match(css, /\.weekly-eventuales-report \{[^}]*max-width: 100%[^}]*min-width: 0/s);
+  assert.match(css, /\.weekly-table-wrap \{[^}]*max-width: 100%[^}]*min-width: 0[^}]*overflow: auto/s);
+  assert.match(css, /\.planning-week-grid \{[^}]*minmax\(210px, 1fr\)[^}]*gap: 8px/s);
+  assert.match(css, /\.planning-day-card \{[^}]*min-width: 210px/s);
+});

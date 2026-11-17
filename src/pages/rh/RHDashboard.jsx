@@ -11,6 +11,7 @@ const PersonalPanel = lazy(() => import('../admin/PersonalPanel'));
 const PuestosPanel = lazy(() => import('../admin/PuestosPanel'));
 const HorariosPanel = lazy(() => import('../admin/HorariosPanel'));
 const PlaneacionPersonalPanel = lazy(() => import('../admin/PlaneacionPersonalPanel'));
+const RequisicionesPersonalPanel = lazy(() => import('../admin/RequisicionesPersonalPanel'));
 const ReporteAsistenciaTipoPanel = lazy(() => import('../admin/reportes/ReporteAsistenciaTipoPanel'));
 
 const GROUPS = [
@@ -20,6 +21,7 @@ const GROUPS = [
       { id: 'personal', label: 'Personal', permiso: PERMISOS.ADMINISTRAR_PERSONAL, icon: <Users size={17} /> },
       { id: 'puestos', label: 'Puestos', permiso: PERMISOS.ADMINISTRAR_PUESTOS, icon: <BriefcaseBusiness size={17} /> },
       { id: 'horarios', label: 'Horarios', permiso: PERMISOS.ADMINISTRAR_HORARIOS, icon: <Clock3 size={17} /> },
+      { id: 'requisiciones', label: 'Requisiciones de personal', permisos: [PERMISOS.AUTORIZAR_REQUISICIONES_PERSONAL, PERMISOS.PLANEACION_PERSONAL], icon: <FileClock size={17} /> },
       { id: 'planeacion', label: 'Planeación de personal', permiso: PERMISOS.PLANEACION_PERSONAL, icon: <CalendarRange size={17} /> },
     ],
   },
@@ -39,7 +41,7 @@ export default function RHDashboard() {
     () => GROUPS
       .map((group) => ({
         ...group,
-        items: group.items.filter((item) => tienePermiso(profile, item.permiso)),
+        items: group.items.filter((item) => item.permisos ? item.permisos.some((permiso) => tienePermiso(profile, permiso)) : tienePermiso(profile, item.permiso)),
       }))
       .filter((group) => group.items.length),
     [profile]
@@ -86,6 +88,9 @@ export default function RHDashboard() {
     }
     if (tab === 'horarios') {
       return <HorariosPanel setMessage={setMessage} />;
+    }
+    if (tab === 'requisiciones') {
+      return <RequisicionesPersonalPanel />;
     }
     if (tab === 'planeacion') {
       return <PlaneacionPersonalPanel propiedades={properties} setMessage={setMessage} />;

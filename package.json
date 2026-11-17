@@ -11,7 +11,7 @@
     "sync:android": "cap sync android",
     "open:android": "cap open android",
     "build:android": "vite build && cap sync android",
-    "test:asistencia": "node --test tests/asistencia.test.mjs tests/asistencia-backend.test.mjs tests/eventuales-nomina.test.mjs tests/planeacion.test.mjs"
+    "test:asistencia": "node --test \"tests/*.test.mjs\""
   },
   "dependencies": {
     "@capacitor/android": "^8.4.0",

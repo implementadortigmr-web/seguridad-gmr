@@ -4,6 +4,8 @@ import { QRCodeCanvas } from 'qrcode.react';
 import CatalogTable from '../../components/CatalogTable';
 import FormModal from '../../components/admin/FormModal';
 import DataLoadingState from '../../components/DataLoadingState';
+import EventualesTools from './EventualesTools';
+import { consultarFotoPersonalEventual } from '../../services/eventualesRegistroService';
 import {
   guardarPersonal,
   listarPersonalPorTipo,
@@ -17,6 +19,8 @@ const EVENTUAL_EMPTY = {
   area: '',
   puestoId: '',
   tarifaPersonalizada: '',
+  encargadoNombre: '',
+  grupoNombre: '',
   activo: true,
 };
 
@@ -67,6 +71,7 @@ export default function PersonalPanel({ propiedades = [], setMessage, defaultTab
   const [editingId, setEditingId] = useState('');
   const [form, setForm] = useState(EVENTUAL_EMPTY);
   const [qrPerson, setQrPerson] = useState(null);
+  const [qrFoto, setQrFoto] = useState('');
   const qrRef = useRef(null);
 
   const activeProperties = useMemo(
@@ -100,6 +105,8 @@ export default function PersonalPanel({ propiedades = [], setMessage, defaultTab
           item.nombre,
           item.area,
           item.puestoNombre,
+          item.grupoNombre,
+          item.encargadoNombre,
           item.school,
           item.career,
           item.supervisor,
@@ -170,6 +177,8 @@ export default function PersonalPanel({ propiedades = [], setMessage, defaultTab
         area: item.area || '',
         puestoId: item.puestoId || '',
         tarifaPersonalizada: item.tarifaPersonalizada ?? '',
+        encargadoNombre: item.encargadoNombre || '',
+        grupoNombre: item.grupoNombre || '',
         activo: item.activo !== false,
       });
     } else {
@@ -250,6 +259,13 @@ export default function PersonalPanel({ propiedades = [], setMessage, defaultTab
     return person.area || 'Personal';
   }
 
+  async function abrirCredencial(persona) {
+    setQrFoto(''); setQrPerson(persona);
+    if (persona.tipo !== 'eventual' || !persona.fotoRostroPath) return;
+    try { const result = await consultarFotoPersonalEventual(persona.id); setQrFoto(result.fotoRostro || ''); }
+    catch { setQrFoto(''); }
+  }
+
   async function downloadQr() {
     const qrCanvas = qrRef.current?.querySelector('canvas');
     if (!qrCanvas || !qrPerson) return;
@@ -289,8 +305,16 @@ export default function PersonalPanel({ propiedades = [], setMessage, defaultTab
       ctx.fillText('MEXICO REAL CORPORATIVO', width / 2, 96);
     }
 
-    const qrSize = 430;
-    ctx.drawImage(qrCanvas, (width - qrSize) / 2, 205, qrSize, qrSize);
+    if (qrFoto) {
+      try {
+        const image = await new Promise((resolve, reject) => {
+          const i = new Image(); i.onload = () => resolve(i); i.onerror = reject; i.src = qrFoto;
+        });
+        ctx.drawImage(image, (width - 150) / 2, 178, 150, 150);
+      } catch { /* Descarga QR sin la foto si no puede cargarla */ }
+    }
+    const qrSize = qrFoto ? 335 : 430;
+    ctx.drawImage(qrCanvas, (width - qrSize) / 2, qrFoto ? 335 : 205, qrSize, qrSize);
 
     ctx.fillStyle = '#112b3c';
     ctx.textAlign = 'center';
@@ -312,7 +336,7 @@ export default function PersonalPanel({ propiedades = [], setMessage, defaultTab
     link.click();
   }
 
-  const eventualColumns = ['Nombre', 'Propiedades', 'Puesto', 'Tarifa', 'Estado', 'Acciones'];
+  const eventualColumns = ['Nombre', 'Propiedades', 'Puesto', 'Encargado', 'Tarifa', 'Estado', 'Acciones'];
   const practColumns = ['Nombre', 'Propiedades', 'Escuela / Carrera', 'Horas objetivo', 'Estado', 'Acciones'];
 
   return (
@@ -346,6 +370,16 @@ export default function PersonalPanel({ propiedades = [], setMessage, defaultTab
           Practicantes
         </button>
       </div>
+
+      {tab === 'eventual' && (
+        <EventualesTools
+          propiedades={selectableProperties}
+          puestos={activeJobs}
+          personas={rows}
+          onImported={() => load('eventual')}
+          setMessage={setMessage}
+        />
+      )}
 
       <div className="catalog-filter-row">
         <input
@@ -382,13 +416,14 @@ export default function PersonalPanel({ propiedades = [], setMessage, defaultTab
                   item.nombre,
                   propertyNames(item),
                   item.puestoNombre || 'Sin puesto',
+                  item.encargadoNombre || '—',
                   `$${Number(item.tarifaPersonalizada ?? item.tarifaBase ?? 0).toFixed(2)}`,
                   item.activo !== false ? 'Activo' : 'Inactivo',
                   <div className="table-actions" key={item.id}>
                     <button type="button" className="mini-button" onClick={() => editar(item)}>
                       <Edit3 size={14} /> Editar
                     </button>
-                    <button type="button" className="mini-button" onClick={() => setQrPerson(item)}>
+                    <button type="button" className="mini-button" onClick={() => abrirCredencial(item)}>
                       <QrCode size={14} /> QR
                     </button>
                   </div>,
@@ -403,7 +438,7 @@ export default function PersonalPanel({ propiedades = [], setMessage, defaultTab
                     <button type="button" className="mini-button" onClick={() => editar(item)}>
                       <Edit3 size={14} /> Editar
                     </button>
-                    <button type="button" className="mini-button" onClick={() => setQrPerson(item)}>
+                    <button type="button" className="mini-button" onClick={() => abrirCredencial(item)}>
                       <QrCode size={14} /> QR
                     </button>
                   </div>,
@@ -464,7 +499,7 @@ export default function PersonalPanel({ propiedades = [], setMessage, defaultTab
             </div>
           </div>
 
-          <label className="field-label">
+          {tab === 'practicante' && <label className="field-label">
             Área
             <input
               className="text-input"
@@ -472,7 +507,7 @@ export default function PersonalPanel({ propiedades = [], setMessage, defaultTab
               value={form.area}
               onChange={(e) => setForm({ ...form, area: e.target.value })}
             />
-          </label>
+          </label>}
 
           {tab === 'eventual' ? (
             <>
@@ -512,6 +547,17 @@ export default function PersonalPanel({ propiedades = [], setMessage, defaultTab
                   Si queda vacía se utiliza la tarifa actual del puesto.
                 </span>
               </label>
+
+              <label className="field-label">
+                Encargado / responsable (opcional)
+                <input
+                  className="text-input"
+                  maxLength={160}
+                  value={form.encargadoNombre}
+                  onChange={(e) => setForm({ ...form, encargadoNombre: e.target.value })}
+                />
+              </label>
+
             </>
           ) : (
             <>
@@ -620,6 +666,7 @@ export default function PersonalPanel({ propiedades = [], setMessage, defaultTab
               <div className="qr-brand-panel">
                 <img src="/brand/gmr-logo.png" alt="México Real Corporativo" className="qr-corporate-logo" />
               </div>
+              {qrFoto && <img src={qrFoto} alt="Foto del eventual" className="public-eventual-photo" />}
               <QRCodeCanvas
                 value={qrPerson.qr || qrPerson.clave}
                 size={220}

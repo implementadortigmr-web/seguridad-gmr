@@ -95,7 +95,8 @@ export function validarPersonal(data) {
     throw new Error('La clave interna no es valida.');
   }
 
-  const nombre = String(data?.nombre ?? '').trim();
+  const nombreCapturado = String(data?.nombre ?? '').trim();
+  const nombre = data?.tipo === 'eventual' ? nombreCapturado.toLocaleUpperCase('es-MX') : nombreCapturado;
   if (!nombre || nombre.length > 160) {
     throw new Error('Captura un nombre de hasta 160 caracteres.');
   }

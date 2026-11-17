@@ -1,17 +1,15 @@
+import RevisionJornadaModal from './RevisionJornadaModal';
+import { fechaSalidaTexto, revisionJornada } from '../../../../shared/operacionEventuales';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle,
   CalendarDays,
   Download,
   FileSpreadsheet,
   FileText,
   RefreshCcw,
-  Save,
 } from 'lucide-react';
 import DataLoadingState from '../../../components/DataLoadingState';
-import FormModal from '../../../components/admin/FormModal';
 import { useAuth } from '../../../context/AuthContext';
-import { useFeedback } from '../../../context/FeedbackContext';
 import {
   exportarTodasJornadas,
   listarPersonal,
@@ -27,6 +25,7 @@ import {
   rangoSemanaISO,
   resumirSemanaEventuales,
   semanaISOActual,
+  turnoProgramadoTexto,
 } from '../../../modules/asistencia/utils/eventualesNomina';
 
 function numero(value) {
@@ -40,6 +39,7 @@ function fechaCorta(value) {
 }
 
 function estadoRegistro(jornada) {
+  if (revisionJornada(jornada).requiereRevision) return 'En revision - sin pago';
   if (jornada?.estado === 'sin_salida') {
     return jornada?.resueltoAdministrativamente
       ? 'Sin salida registrada · resuelto por RH'
@@ -52,9 +52,7 @@ function estadoRegistro(jornada) {
   return jornada?.estado || 'Pendiente de salida/corrección';
 }
 
-function puedeResolverRegistro(jornada) {
-  return !jornada?.salidaEn && ['salida_pendiente', 'sin_salida'].includes(jornada?.estado);
-}
+
 
 async function cargarLogoDataUrl() {
   try {
@@ -72,25 +70,29 @@ async function cargarLogoDataUrl() {
   }
 }
 
-function prepararFilas(rows, people) {
+function prepararFilas(rows, people, programaciones = []) {
   const personal = new Map((people || []).map((item) => [item.id, item]));
+  const programas = new Map((programaciones || []).map((item) => [item.id, item]));
   return (rows || []).map((row) => {
     const person = personal.get(row.empleadoId);
+    const programa = row.programacionId ? programas.get(row.programacionId) : null;
     return {
       ...row,
+      empleadoNombre: String(row.empleadoNombre || person?.nombre || '').toLocaleUpperCase('es-MX'),
       area: row.area || person?.area || '',
-      puestoNombre: row.puestoNombre || person?.puestoNombre || '',
-      tarifaHoraAplicada: Number(
-        row.tarifaHoraAplicada
-        ?? person?.tarifaPersonalizada
-        ?? person?.tarifaBase
-        ?? 0
-      ),
+      puestoNombre: row.puestoNombre || person?.puestoNombre || programa?.puestoNombre || '',
+      tarifaHoraAplicada: Number(row.tarifaHoraAplicada ?? 0),
+      horarioIdPlanificado: row.horarioIdPlanificado || programa?.horarioId || '',
+      horarioNombrePlanificado: row.horarioNombrePlanificado || programa?.horarioNombre || '',
+      horaInicioPlanificada: row.horaInicioPlanificada || programa?.horaInicio || '',
+      horaFinPlanificada: row.horaFinPlanificada || programa?.horaFin || '',
+      minutosTurnoPlanificado: Number(row.minutosTurnoPlanificado || programa?.minutosDuracion || 0) || null,
+      cruzaDiaPlanificado: row.cruzaDiaPlanificado === true || programa?.cruzaDia === true,
     };
   });
 }
 
-async function pdfSolicitud({ propiedad, rango, summary, control, folio }) {
+async function pdfEventuales({ propiedad, rango, summary, control, folio }) {
   const { jsPDF } = await import('jspdf');
   const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter' });
   const W = doc.internal.pageSize.getWidth();
@@ -106,24 +108,24 @@ async function pdfSolicitud({ propiedad, rango, summary, control, folio }) {
   doc.setTextColor(255);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(17);
-  doc.text(`Solicitud de efectivo · ${propiedad.nombre}`, 210, 30);
+  doc.text(`Reporte semanal de Eventuales · ${propiedad.nombre}`, 210, 30);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9.5);
   doc.text(`Eventuales · Semana ${String(rango.week).padStart(2, '0')} · ${rango.desde} a ${rango.hasta}`, 210, 49);
   doc.text(`Folio: ${folio}`, W - margin, 49, { align: 'right' });
 
   const headers = [
-    'EVENTUAL', 'PUESTO', 'ÁREA', 'DÍAS',
+    'EVENTUAL', 'PUESTO', 'DÍAS',
     ...rango.dias.map((d) => String(Number(d.slice(8)))),
     'NORMAL', 'H. EXTRA', 'TOTAL',
   ];
   const usable = W - margin * 2;
-  const widths = [132, 58, 78, 30, ...rango.dias.map(() => 38), 64, 60, 70];
+  const widths = [160, 76, 32, ...rango.dias.map(() => 38), 68, 64, 76];
   const totalWidth = widths.reduce((a, b) => a + b, 0);
   const scale = usable / totalWidth;
   const sw = widths.map((value) => value * scale);
   const tableWidth = sw.reduce((a, b) => a + b, 0);
-  const textColumns = new Set([0, 1, 2]);
+  const textColumns = new Set([0, 1]);
   let y = 98;
 
   function drawHeader() {
@@ -152,9 +154,8 @@ async function pdfSolicitud({ propiedad, rango, summary, control, folio }) {
   drawHeader();
 
   const body = summary.personas.map((person) => [
-    person.nombre,
+    String(person.nombre || '').toLocaleUpperCase('es-MX'),
     person.puesto,
-    person.area || '-',
     person.dias,
     ...rango.dias.map((date) => dailyMoney(person.fechas[date])),
     dinero(person.pagoNormal),
@@ -163,7 +164,7 @@ async function pdfSolicitud({ propiedad, rango, summary, control, folio }) {
   ]);
 
   body.push([
-    'TOTAL GENERAL', '', '', summary.totals.dias,
+    'TOTAL GENERAL', '', summary.totals.dias,
     ...rango.dias.map((date) => dailyMoney(summary.totals.fechas[date])),
     dinero(summary.totals.pagoNormal),
     dinero(summary.totals.pagoExtra),
@@ -175,7 +176,7 @@ async function pdfSolicitud({ propiedad, rango, summary, control, folio }) {
     const textLines = row.map((value, index) => textColumns.has(index)
       ? doc.splitTextToSize(String(value ?? '-'), Math.max(18, sw[index] - 8))
       : [String(value ?? '-')]);
-    const maxLines = Math.max(1, ...textLines.slice(0, 3).map((lines) => lines.length));
+    const maxLines = Math.max(1, ...textLines.slice(0, 2).map((lines) => lines.length));
     const rowHeight = Math.max(25, maxLines * 8 + 9);
 
     if (y + rowHeight > H - 145) {
@@ -197,7 +198,7 @@ async function pdfSolicitud({ propiedad, rango, summary, control, folio }) {
         doc.setFontSize(7.1);
         doc.text(textLines[index], x + 4, y + 11);
       } else {
-        doc.setFontSize(index === 3 ? 7.2 : 6.7);
+        doc.setFontSize(index === 2 ? 7.2 : 6.7);
         doc.text(String(value ?? '-'), x + sw[index] - 4, y + 15, { align: 'right' });
       }
       x += sw[index];
@@ -208,7 +209,11 @@ async function pdfSolicitud({ propiedad, rango, summary, control, folio }) {
   const requested = numero(control.solicitado);
   const paid = numero(control.pagado);
   const balance = Math.max(0, requested - paid);
-  const boxY = Math.min(H - 150, y + 18);
+  let boxY = y + 18;
+  if (boxY + 92 > H - 52) {
+    doc.addPage();
+    boxY = 48;
+  }
   const leftW = 250;
   const gap = 18;
   const rightX = margin + leftW + gap;
@@ -238,7 +243,88 @@ async function pdfSolicitud({ propiedad, rango, summary, control, folio }) {
   doc.text('Elaboró', margin + 128, signaturesY, { align: 'center' });
   doc.text('Autorizó', W - margin - 128, signaturesY, { align: 'center' });
 
-  doc.save(`solicitud_efectivo_${folio}.pdf`);
+  const detailRows = summary.personas.flatMap((person) => person.jornadas.map((row) => ({
+    person,
+    row,
+    calc: row.calculoPago,
+  }))).sort((a, b) => `${a.row.fechaJornada || ''}|${a.person.nombre || ''}`.localeCompare(`${b.row.fechaJornada || ''}|${b.person.nombre || ''}`, 'es'));
+
+  if (detailRows.length) {
+    const detailHeaders = ['EVENTUAL', 'FECHA', 'PUESTO', 'TURNO PROGRAMADO', 'ENTRADA', 'SALIDA', 'HRS TURNO', 'HRS PAG.', 'NORMAL', 'EXTRA', 'TOTAL'];
+    const detailWidths = [126, 58, 72, 90, 50, 50, 55, 55, 50, 45, 85];
+    const detailTextColumns = new Set([0, 2, 3]);
+    let detailY = 0;
+
+    function startDetailPage() {
+      doc.addPage();
+      doc.setFillColor(16, 40, 58);
+      doc.rect(0, 0, W, 62, 'F');
+      if (logo) doc.addImage(logo, 'PNG', margin, 14, 145, 34, undefined, 'FAST');
+      doc.setTextColor(255);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(15);
+      doc.text('Detalle de turnos y asistencia', 205, 27);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.8);
+      doc.text(`Semana ${String(rango.week).padStart(2, '0')} · ${rango.desde} a ${rango.hasta}`, 205, 44);
+      doc.text(`Folio: ${folio}`, W - margin, 44, { align: 'right' });
+      doc.setTextColor(55, 68, 80);
+      doc.setFontSize(8);
+      doc.text('El turno programado define las horas normales. Sin turno asignado se conserva la base de 8 h normales.', margin, 80);
+      detailY = 92;
+      doc.setFillColor(17, 30, 50);
+      doc.rect(margin, detailY, detailWidths.reduce((a, b) => a + b, 0), 30, 'F');
+      doc.setTextColor(255);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(6.8);
+      let hx = margin;
+      detailHeaders.forEach((header, index) => {
+        const align = detailTextColumns.has(index) ? 'left' : 'center';
+        doc.text(header, detailTextColumns.has(index) ? hx + 4 : hx + detailWidths[index] / 2, detailY + 18, { align, maxWidth: detailWidths[index] - 8 });
+        hx += detailWidths[index];
+      });
+      detailY += 30;
+    }
+
+    startDetailPage();
+    detailRows.forEach(({ person, row, calc }, index) => {
+      const values = [
+        String(person.nombre || '').toLocaleUpperCase('es-MX'),
+        row.fechaJornada || '-',
+        row.puestoNombre || person.puesto || '-',
+        turnoProgramadoTexto(row),
+        horaTexto(row.entradaEn, row.zonaHoraria),
+        row.salidaEn ? horaTexto(row.salidaEn, row.zonaHoraria) : '-',
+        calc.horasTurnoProgramado > 0 ? calc.horasTurnoProgramado.toFixed(2) : '-',
+        calc.pendiente ? '-' : calc.horasPagables.toFixed(2),
+        calc.pendiente ? '-' : calc.horasNormales.toFixed(2),
+        calc.pendiente ? '-' : calc.horasExtra.toFixed(2),
+        calc.pendiente ? '-' : dinero(calc.total),
+      ];
+      const wrapped = values.map((value, col) => detailTextColumns.has(col)
+        ? doc.splitTextToSize(String(value), Math.max(18, detailWidths[col] - 8))
+        : [String(value)]);
+      const lineCount = Math.max(1, ...wrapped.map((lines) => lines.length));
+      const rowHeight = Math.max(26, lineCount * 7.2 + 9);
+      if (detailY + rowHeight > H - 32) startDetailPage();
+      doc.setFillColor(...(index % 2 ? [248, 250, 252] : [255, 255, 255]));
+      doc.rect(margin, detailY, detailWidths.reduce((a, b) => a + b, 0), rowHeight, 'F');
+      doc.setDrawColor(226, 231, 236);
+      doc.line(margin, detailY + rowHeight, margin + detailWidths.reduce((a, b) => a + b, 0), detailY + rowHeight);
+      doc.setTextColor(22, 38, 54);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6.6);
+      let cx = margin;
+      values.forEach((value, col) => {
+        if (detailTextColumns.has(col)) doc.text(wrapped[col], cx + 4, detailY + 11);
+        else doc.text(String(value), cx + detailWidths[col] / 2, detailY + 15, { align: 'center', maxWidth: detailWidths[col] - 6 });
+        cx += detailWidths[col];
+      });
+      detailY += rowHeight;
+    });
+  }
+
+  doc.save(`reporte_eventuales_${folio}.pdf`);
 }
 
 async function pdfRecibos({ propiedad, rango, summary, folio }) {
@@ -248,7 +334,7 @@ async function pdfRecibos({ propiedad, rango, summary, folio }) {
   const H = doc.internal.pageSize.getHeight();
   const logo = await cargarLogoDataUrl();
 
-  function drawReceipt(person, top, height) {
+  function drawReceipt(person, top, height, receiptNumber, receiptTotal) {
     const x = 28;
     const width = W - 56;
     doc.setDrawColor(210, 214, 219);
@@ -263,20 +349,22 @@ async function pdfRecibos({ propiedad, rango, summary, folio }) {
     doc.setFontSize(13);
     doc.text(propiedad.nombre, x + 178, top + 27);
     doc.setFontSize(8.5);
-    doc.text(`Folio: ${folio}`, x + width - 16, top + 27, { align: 'right' });
+    doc.text(`Folio: ${folio}`, x + width - 16, top + 22, { align: 'right' });
+    doc.setFontSize(8);
+    doc.text(`Recibo ${String(receiptNumber).padStart(2, '0')} de ${String(receiptTotal).padStart(2, '0')}`, x + width - 16, top + 39, { align: 'right' });
 
     doc.setTextColor(30, 35, 42);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(12.5);
-    doc.text(person.nombre, W / 2, top + 82, { align: 'center' });
+    doc.text(String(person.nombre || '').toLocaleUpperCase('es-MX'), W / 2, top + 82, { align: 'center' });
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9.5);
     doc.text(`Puesto: ${person.puesto}`, x + 15, top + 105);
     doc.text(`Semana: ${rango.week}`, x + 190, top + 105);
     doc.text(`Periodo: ${rango.desde} a ${rango.hasta}`, x + 300, top + 105);
 
-    const cols = ['Fecha', 'Entrada', 'Salida', 'Horas pagables', 'Tarifa', 'Pago'];
-    const widths = [95, 75, 75, 85, 78, 92];
+    const cols = ['Fecha', 'Entrada', 'Salida', 'Fecha salida', 'Horas', 'Tarifa', 'Pago'];
+    const widths = [78, 48, 48, 78, 55, 98, 95];
     let y = top + 122;
     let cx = x + 15;
     doc.setFillColor(183, 86, 74);
@@ -296,6 +384,7 @@ async function pdfRecibos({ propiedad, rango, summary, folio }) {
         row.fechaJornada || '-',
         horaTexto(row.entradaEn, row.zonaHoraria),
         row.salidaEn ? horaTexto(row.salidaEn, row.zonaHoraria) : '-',
+        fechaSalidaTexto(row.salidaEn,row.zonaHoraria),
         calc.pendiente ? '-' : calc.horasPagables.toFixed(2),
         dinero(calc.tarifa),
         calc.pendiente ? '-' : dinero(calc.total),
@@ -345,14 +434,14 @@ async function pdfRecibos({ propiedad, rango, summary, folio }) {
   summary.personas.forEach((person, index) => {
     const slot = index % 2;
     if (index > 0 && slot === 0) doc.addPage();
-    drawReceipt(person, 25 + slot * 365, receiptHeight);
+    drawReceipt(person, 25 + slot * 365, receiptHeight, index + 1, summary.personas.length);
   });
 
   doc.save(`recibos_eventuales_${rango.desde}_a_${rango.hasta}.pdf`);
 }
 
 function descargarCsv({ propiedad, rango, summary, folio }) {
-  const headers = ['Folio', 'Eventual', 'Puesto', 'Area', 'Dias', ...rango.dias, 'Horas normales', 'Horas extra', 'Pago normal', 'Pago extra', 'Total final', 'Pendientes'];
+  const headers = ['Folio', 'Eventual', 'Puesto', 'Dias', ...rango.dias, 'Horas normales', 'Horas extra', 'Pago normal', 'Pago extra', 'Total final', 'Pendientes'];
   const escape = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
   const lines = [headers.map(escape).join(',')];
   summary.personas.forEach((p) => {
@@ -360,7 +449,6 @@ function descargarCsv({ propiedad, rango, summary, folio }) {
       folio,
       p.nombre,
       p.puesto,
-      p.area || '',
       p.dias,
       ...rango.dias.map((d) => (p.fechas[d] || 0).toFixed(2)),
       p.horasNormales.toFixed(2),
@@ -382,31 +470,29 @@ function descargarCsv({ propiedad, rango, summary, folio }) {
 
 export default function ReporteSemanalEventuales({ propiedad }) {
   const { profile } = useAuth();
-  const feedback = useFeedback();
   const [weekValue, setWeekValue] = useState(() => semanaISOActual());
   const [rows, setRows] = useState([]);
   const [people, setPeople] = useState([]);
+  const [programaciones, setProgramaciones] = useState([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
   const [control, setControl] = useState({ solicitado: '', pagado: '', comentarios: '' });
   const [refreshKey, setRefreshKey] = useState(0);
-  const [resolver, setResolver] = useState(null);
-  const [resolverModo, setResolverModo] = useState('sin_salida');
-  const [resolverSalida, setResolverSalida] = useState('');
-  const [resolverMotivo, setResolverMotivo] = useState('');
-  const [resolverBusy, setResolverBusy] = useState(false);
+  const [editor,setEditor]=useState(null);
+  const [soloRevision,setSoloRevision]=useState(false);
+  const [limiteHoras,setLimiteHoras]=useState(16);
 
   const puedeResolverTurnos = profile?.rol === 'administrador'
     || tienePermiso(profile, PERMISOS.RESOLVER_TURNOS_EVENTUALES);
 
   const rango = useMemo(() => rangoSemanaISO(weekValue), [weekValue]);
   const folio = useMemo(() => folioSolicitudEventuales(propiedad, rango), [propiedad, rango]);
-  const preparedRows = useMemo(() => prepararFilas(rows, people), [rows, people]);
+  const preparedRows = useMemo(() => prepararFilas(rows, people, programaciones).map(r=>({...r,limiteRevisionHoras:r.limiteRevisionHoras || limiteHoras})), [rows, people, programaciones, limiteHoras]);
   const summary = useMemo(() => resumirSemanaEventuales(preparedRows, rango), [preparedRows, rango]);
 
   useEffect(() => {
     let alive = true;
-    setLoading(true);
+    setLoading(true);setRows([]);setPeople([]);setProgramaciones([]);setEditor(null);
     setMessage('');
     Promise.all([
       exportarTodasJornadas({
@@ -418,11 +504,24 @@ export default function ReporteSemanalEventuales({ propiedad }) {
         tipoPersonal: 'eventual',
       }),
       listarPersonal(propiedad.id, 'eventual'),
+      llamarAsistencia('asistenciaLimitesRevision'),
     ])
-      .then(([jornadas, personal]) => {
+      .then(async ([jornadas, personal, limites]) => {
+        const programacionIds = [...new Set((jornadas || []).map((row) => row.programacionId).filter(Boolean))];
+        let programas = [];
+        if (programacionIds.length) {
+          try {
+            const response = await llamarAsistencia('asistenciaProgramacionesReporte', { propiedadId: propiedad.id, programacionIds });
+            programas = Array.isArray(response?.rows) ? response.rows : [];
+          } catch (error) {
+            console.warn('No fue posible cargar horarios programados del reporte', error);
+          }
+        }
         if (!alive) return;
+        setLimiteHoras(limites.limiteHoras);
         setRows(jornadas);
         setPeople(personal);
+        setProgramaciones(programas);
       })
       .catch((error) => {
         if (alive) setMessage(mensajeAsistencia(error));
@@ -432,83 +531,6 @@ export default function ReporteSemanalEventuales({ propiedad }) {
       });
     return () => { alive = false; };
   }, [propiedad.id, rango.desde, rango.hasta, refreshKey]);
-
-  function abrirResolverTurno(jornada, persona) {
-    setResolver({
-      ...jornada,
-      empleadoNombre: jornada.empleadoNombre || persona.nombre,
-      puestoNombre: jornada.puestoNombre || persona.puesto,
-    });
-    const modo = jornada.estado === 'sin_salida' ? 'corregir_salida' : 'sin_salida';
-    setResolverModo(modo);
-    setResolverSalida('');
-    setResolverMotivo(
-      modo === 'sin_salida'
-        ? 'El eventual no registró su salida y RH resolvió el pendiente.'
-        : ''
-    );
-  }
-
-  function cerrarResolverTurno(force = false) {
-    if (resolverBusy && !force) return;
-    setResolver(null);
-    setResolverSalida('');
-    setResolverMotivo('');
-    setResolverModo('sin_salida');
-  }
-
-  async function resolverTurno(event) {
-    event.preventDefault();
-    if (!resolver || resolverBusy) return;
-
-    const motivo = resolverMotivo.trim();
-    if (motivo.length < 10) {
-      feedback.warning('Escribe un motivo de al menos 10 caracteres.');
-      return;
-    }
-
-    let salidaIso = '';
-    if (resolverModo === 'corregir_salida') {
-      const parsed = new Date(resolverSalida);
-      if (!Number.isFinite(parsed.getTime())) {
-        feedback.warning('Captura la fecha y hora real de salida.');
-        return;
-      }
-      salidaIso = parsed.toISOString();
-    }
-
-    const confirmada = await feedback.confirm({
-      type: 'warning',
-      title: resolverModo === 'corregir_salida' ? 'Confirmar salida corregida' : 'Confirmar sin salida registrada',
-      message: resolverModo === 'corregir_salida'
-        ? 'Se guardará la hora real indicada, se recalcularán las horas y el pago, y quedará auditoría del cambio.'
-        : 'El turno dejará de aparecer a Seguridad como pendiente. No se inventará una hora de salida y no generará pago hasta que se corrija.',
-      confirmText: 'Resolver turno',
-      cancelText: 'Cancelar',
-    });
-    if (!confirmada) return;
-
-    setResolverBusy(true);
-    try {
-      await llamarAsistencia('asistenciaResolverTurnoAdministrativo', {
-        jornadaId: resolver.id,
-        accion: resolverModo,
-        salidaIso,
-        motivo,
-      });
-      cerrarResolverTurno(true);
-      setRefreshKey((value) => value + 1);
-      feedback.success(
-        resolverModo === 'corregir_salida'
-          ? 'La salida fue corregida y el pago semanal se recalculará.'
-          : 'El turno quedó como sin salida registrada y ya no aparecerá pendiente para Seguridad.'
-      );
-    } catch (error) {
-      feedback.error(mensajeAsistencia(error));
-    } finally {
-      setResolverBusy(false);
-    }
-  }
 
   const solicitado = control.solicitado === '' ? summary.totals.total : numero(control.solicitado);
   const sobrante = Math.max(0, solicitado - numero(control.pagado));
@@ -559,7 +581,6 @@ export default function ReporteSemanalEventuales({ propiedad }) {
                 <tr>
                   <th>Eventual</th>
                   <th>Puesto</th>
-                  <th>Área</th>
                   <th>Días</th>
                   {rango.dias.map((d) => <th key={d}>{fechaCorta(d)}</th>)}
                   <th>Normal</th>
@@ -573,29 +594,28 @@ export default function ReporteSemanalEventuales({ propiedad }) {
                   <tr key={p.id}>
                     <td><strong>{p.nombre}</strong></td>
                     <td>{p.puesto}</td>
-                    <td>{p.area || '-'}</td>
                     <td>{p.dias}</td>
                     {rango.dias.map((d) => <td key={d}>{p.fechas[d] ? dinero(p.fechas[d]) : '-'}</td>)}
                     <td>{dinero(p.pagoNormal)}</td>
                     <td>{dinero(p.pagoExtra)}</td>
                     <td><strong>{dinero(p.total)}</strong></td>
-                    <td>{p.pendientes ? <span className="weekly-pending">{p.pendientes} pendiente(s)</span> : <span className="weekly-ok">Completo</span>}</td>
+                    <td>{p.pendientes ? <span className="weekly-pending">{p.pendientes} pendiente(s)</span> : <span className="weekly-ok">Sin pendientes</span>}</td>
                   </tr>
                 ))}
                 {!summary.personas.length && (
-                  <tr><td colSpan={15} className="weekly-empty">No hay jornadas de eventuales para esta semana.</td></tr>
+                  <tr><td colSpan={14} className="weekly-empty">No hay jornadas de eventuales para esta semana.</td></tr>
                 )}
               </tbody>
               {summary.personas.length > 0 && (
                 <tfoot>
                   <tr>
-                    <th colSpan={3}>TOTAL GENERAL</th>
+                    <th colSpan={2}>TOTAL GENERAL</th>
                     <th>{summary.totals.dias}</th>
                     {rango.dias.map((d) => <th key={d}>{summary.totals.fechas[d] ? dinero(summary.totals.fechas[d]) : '-'}</th>)}
                     <th>{dinero(summary.totals.pagoNormal)}</th>
                     <th>{dinero(summary.totals.pagoExtra)}</th>
                     <th>{dinero(summary.totals.total)}</th>
-                    <th>{summary.totals.pendientes ? `${summary.totals.pendientes} pendiente(s)` : 'Completo'}</th>
+                    <th>{summary.totals.pendientes ? `${summary.totals.pendientes} pendiente(s)` : 'Sin pendientes'}</th>
                   </tr>
                 </tfoot>
               )}
@@ -604,20 +624,20 @@ export default function ReporteSemanalEventuales({ propiedad }) {
 
           <div className="weekly-control-grid">
             <div className="weekly-control-card">
-              <h3>Solicitud de efectivo</h3>
+              <h3>Control de efectivo</h3>
               <label>Solicitado<input type="number" min="0" step="0.01" value={control.solicitado} placeholder={summary.totals.total.toFixed(2)} onChange={(e) => setControl({ ...control, solicitado: e.target.value })} /></label>
               <label>Pagado<input type="number" min="0" step="0.01" value={control.pagado} onChange={(e) => setControl({ ...control, pagado: e.target.value })} /></label>
               <div className="weekly-balance"><span>Sobrante</span><strong>{dinero(sobrante)}</strong></div>
             </div>
             <div className="weekly-control-card">
               <h3>Comentarios</h3>
-              <textarea rows={5} value={control.comentarios} onChange={(e) => setControl({ ...control, comentarios: e.target.value })} placeholder="Comentarios de la solicitud o ajustes de pago..." />
+              <textarea rows={5} value={control.comentarios} onChange={(e) => setControl({ ...control, comentarios: e.target.value })} placeholder="Comentarios sobre pagos o ajustes de la semana..." />
             </div>
           </div>
 
           <div className="weekly-actions">
-            <button type="button" onClick={() => pdfSolicitud({ propiedad, rango, summary, control: { ...control, solicitado }, folio })} disabled={!summary.personas.length}>
-              <FileText size={17} /> PDF solicitud
+            <button type="button" onClick={() => pdfEventuales({ propiedad, rango, summary, control: { ...control, solicitado }, folio })} disabled={!summary.personas.length}>
+              <FileText size={17} /> PDF Eventuales
             </button>
             <button type="button" onClick={() => pdfRecibos({ propiedad, rango, summary, folio })} disabled={!summary.personas.length}>
               <Download size={17} /> PDF recibos
@@ -629,32 +649,38 @@ export default function ReporteSemanalEventuales({ propiedad }) {
 
           <section className="weekly-detail-card">
             <h3>Detalle de registros</h3>
+            <div className="weekly-actions">
+              <label className="gmr-revision-filter"><input type="checkbox" checked={soloRevision} onChange={e=>setSoloRevision(e.target.checked)}/>Solo jornadas en revision</label>
+              {puedeResolverTurnos && <button type="button" onClick={()=>setEditor({jornada:null})}>Agregar jornada manual con respaldo</button>}
+              <button type="button" onClick={()=>setRefreshKey(v=>v+1)}>Actualizar registros</button>
+            </div>
+            <p className="muted">A partir de {limiteHoras} horas se requiere revision. Las jornadas en revision no se incluyen en el total pagable. El documento y las horas originales se conservan.</p>
             <div className="weekly-table-wrap">
               <table className="weekly-table compact">
-                <thead><tr><th>Empleado</th><th>Puesto</th><th>Fecha</th><th>Entrada</th><th>Salida</th><th>Horas pagables</th><th>Tarifa</th><th>Pago</th><th>Estado</th>{puedeResolverTurnos && <th>Acción</th>}</tr></thead>
+                <thead><tr><th>Empleado</th><th>Puesto</th><th>Fecha</th><th>Turno programado</th><th>Horas turno</th><th>Entrada</th><th>Salida</th><th>Fecha salida</th><th>Horas pagables</th><th>Normales</th><th>Extra</th><th>Tarifa</th><th>Pago</th><th>Estado</th>{puedeResolverTurnos && <th>Acción</th>}</tr></thead>
                 <tbody>
-                  {summary.personas.flatMap((p) => p.jornadas.map((j) => {
+                  {soloRevision && !preparedRows.some(j=>revisionJornada(j).requiereRevision) && <tr><td colSpan={puedeResolverTurnos?15:14}>No hay jornadas en revision en este periodo.</td></tr>}
+                  {summary.personas.flatMap((p) => p.jornadas.filter(j=>!soloRevision || revisionJornada(j).requiereRevision).map((j) => {
                     const c = j.calculoPago;
                     return (
                       <tr key={j.id || `${p.id}-${j.fechaJornada}-${j.entradaEn}`}>
-                        <td>{p.nombre}</td><td>{p.puesto}</td><td>{j.fechaJornada}</td>
+                        <td>{String(p.nombre || '').toLocaleUpperCase('es-MX')}</td><td>{j.puestoNombre || p.puesto}</td><td>{j.fechaJornada}</td>
+                        <td>{turnoProgramadoTexto(j)}</td>
+                        <td>{c.horasTurnoProgramado > 0 ? c.horasTurnoProgramado.toFixed(2) : '-'}</td>
                         <td>{horaTexto(j.entradaEn, j.zonaHoraria)}</td>
                         <td>{j.salidaEn ? horaTexto(j.salidaEn, j.zonaHoraria) : '-'}</td>
+                        <td>{fechaSalidaTexto(j.salidaEn,j.zonaHoraria)}</td>
                         <td>{c.pendiente ? '-' : c.horasPagables.toFixed(2)}</td>
+                        <td>{c.pendiente ? '-' : c.horasNormales.toFixed(2)}</td>
+                        <td>{c.pendiente ? '-' : c.horasExtra.toFixed(2)}</td>
                         <td>{dinero(c.tarifa)}</td>
                         <td>{c.pendiente ? '-' : dinero(c.total)}</td>
                         <td>{estadoRegistro(j)}</td>
                         {puedeResolverTurnos && (
                           <td>
-                            {puedeResolverRegistro(j) ? (
-                              <button
-                                type="button"
-                                className="weekly-resolve-button"
-                                onClick={() => abrirResolverTurno(j, p)}
-                              >
-                                Resolver turno
-                              </button>
-                            ) : '—'}
+                            <button type="button" className="weekly-resolve-button" onClick={()=>setEditor({jornada:j})}>
+                              {revisionJornada(j).requiereRevision?'Revisar con respaldo':'Editar / historial'}
+                            </button>
                           </td>
                         )}
                       </tr>
@@ -667,96 +693,8 @@ export default function ReporteSemanalEventuales({ propiedad }) {
         </>
       )}
 
-      <FormModal
-        open={Boolean(resolver)}
-        title="Resolver turno pendiente"
-        subtitle="RH puede cerrar el pendiente sin inventar una hora, o capturar la salida real cuando exista evidencia."
-        onClose={cerrarResolverTurno}
-        busy={resolverBusy}
-        width="680px"
-      >
-        {resolver && (
-          <form className="turn-resolution-form" onSubmit={resolverTurno}>
-            <div className="turn-resolution-summary">
-              <div><span>Eventual</span><strong>{resolver.empleadoNombre}</strong></div>
-              <div><span>Puesto</span><strong>{resolver.puestoNombre || 'Sin puesto'}</strong></div>
-              <div><span>Fecha</span><strong>{resolver.fechaJornada || '-'}</strong></div>
-              <div><span>Entrada</span><strong>{horaTexto(resolver.entradaEn, resolver.zonaHoraria)}</strong></div>
-            </div>
-
-            {resolver.estado !== 'sin_salida' && (
-              <div className="turn-resolution-options">
-                <label className={resolverModo === 'sin_salida' ? 'selected' : ''}>
-                  <input
-                    type="radio"
-                    name="resolver-modo"
-                    value="sin_salida"
-                    checked={resolverModo === 'sin_salida'}
-                    onChange={() => {
-                      setResolverModo('sin_salida');
-                      setResolverSalida('');
-                      if (!resolverMotivo.trim()) setResolverMotivo('El eventual no registró su salida y RH resolvió el pendiente.');
-                    }}
-                  />
-                  <AlertTriangle size={20} />
-                  <span><strong>No checó salida</strong><small>No se asignará una hora. Desaparece de pendientes de Seguridad y queda sin pago hasta corregirse.</small></span>
-                </label>
-                <label className={resolverModo === 'corregir_salida' ? 'selected' : ''}>
-                  <input
-                    type="radio"
-                    name="resolver-modo"
-                    value="corregir_salida"
-                    checked={resolverModo === 'corregir_salida'}
-                    onChange={() => {
-                      setResolverModo('corregir_salida');
-                      setResolverMotivo('');
-                    }}
-                  />
-                  <Save size={20} />
-                  <span><strong>Registrar salida real</strong><small>Usa esta opción solo cuando RH tenga una hora de salida confirmada.</small></span>
-                </label>
-              </div>
-            )}
-
-            {resolverModo === 'corregir_salida' && (
-              <label className="turn-resolution-field">
-                Fecha y hora real de salida
-                <input
-                  type="datetime-local"
-                  required
-                  value={resolverSalida}
-                  onChange={(event) => setResolverSalida(event.target.value)}
-                />
-              </label>
-            )}
-
-            <label className="turn-resolution-field">
-              Motivo / evidencia de la corrección
-              <textarea
-                rows={4}
-                minLength={10}
-                maxLength={1000}
-                required
-                value={resolverMotivo}
-                onChange={(event) => setResolverMotivo(event.target.value)}
-                placeholder="Ej. El jefe de área confirmó la salida del eventual a las 04:00 a.m."
-              />
-            </label>
-
-            <div className="turn-resolution-note">
-              <AlertTriangle size={18} />
-              <span>La modificación queda registrada en auditoría con el usuario de RH/Admin que la realizó.</span>
-            </div>
-
-            <div className="admin-form-modal-actions">
-              <button type="button" className="secondary-button" onClick={cerrarResolverTurno} disabled={resolverBusy}>Cancelar</button>
-              <button type="submit" className="primary-button" disabled={resolverBusy}>
-                {resolverBusy ? 'Guardando...' : 'Resolver turno'}
-              </button>
-            </div>
-          </form>
-        )}
-      </FormModal>
+      <RevisionJornadaModal open={Boolean(editor)} jornada={editor?.jornada || null} propiedad={propiedad} personal={people} limiteHoras={limiteHoras}
+        onClose={()=>setEditor(null)} onSaved={()=>{setEditor(null);setRefreshKey(v=>v+1);}} />
     </section>
   );
 }

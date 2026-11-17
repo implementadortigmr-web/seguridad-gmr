@@ -1,0 +1,12 @@
+.gmr-revision-form {display:grid;gap:16px;min-width:0}
+.gmr-revision-form label {display:grid;gap:7px;font-weight:600;min-width:0}
+.gmr-revision-form input,.gmr-revision-form select,.gmr-revision-form textarea {width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:8px;padding:10px;font:inherit;min-width:0}
+.gmr-revision-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.gmr-revision-form .gmr-revision-check {display:flex;align-items:flex-start;font-weight:400}
+.gmr-revision-check input {width:20px;flex:0 0 20px}
+.gmr-revision-notice {background:#fff7e6;border:1px solid #ecd29b;padding:12px;border-radius:8px;margin:0}
+.gmr-revision-help,.gmr-revision-form small {font-size:.85rem;color:#475569;font-weight:400}
+.gmr-revision-actions {display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap}
+.gmr-revision-history {margin-top:24px}.gmr-revision-history article {padding:12px;border:1px solid #dbe3ec;border-radius:8px;margin:8px 0}.gmr-revision-history small{display:block;color:#475569}.gmr-revision-history p {margin:6px 0}
+.gmr-revision-filter {display:flex;align-items:center;gap:8px;font-weight:500}.gmr-revision-filter input{width:auto}
+@media(max-width:640px){.gmr-revision-grid{grid-template-columns:1fr}.gmr-revision-actions button{width:100%}}

@@ -1,3 +1,4 @@
+import * as operacion from '../functions/operacionEventuales.js';
 // Executes actual handlers with deterministic in-memory adapters. Not a Firebase emulator.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,14 +17,19 @@ function harness() {
     update: async (data) => { if(!docs.has(path)) throw new Error('missing'); docs.set(path, {...docs.get(path), ...data}); },
     set: async (data, opts) => { docs.set(path, opts?.merge ? {...(docs.get(path) || {}), ...data} : data); },
   }; }
-  const db = { doc, collection: (name) => ({ doc: (id = `generated_${++generated}`) => doc(`${name}/${id}`),
-    get: async () => ({ docs: [...docs.keys()].filter((p) => p.split('/').length === 2 && p.startsWith(`${name}/`)).map((p) => snapshot(doc(p))) }),
-    }),
+  function collection(name, filters=[], maximum=Infinity) {
+    return { _query:true, doc:(id=`generated_${++generated}`)=>doc(`${name}/${id}`),
+      where:(key,op,value)=>collection(name,[...filters,[key,op,value]],maximum),
+      orderBy:()=>collection(name,filters,maximum), limit:n=>collection(name,filters,n),
+      get:async()=>{const rows=[...docs.keys()].filter(p=>p.split('/').length===2&&p.startsWith(`${name}/`)).filter(p=>filters.every(([k,op,v])=>op==='=='?docs.get(p)?.[k]===v:op==='>='?docs.get(p)?.[k]>=v:op==='<='?docs.get(p)?.[k]<=v:true)).slice(0,maximum).map(p=>snapshot(doc(p)));return {docs:rows,size:rows.length,empty:!rows.length};}
+    };
+  }
+  const db = { doc, collection,
     runTransaction(fn) {
       const operation = queue.then(async () => {
         const changes = [];
         const result = await fn({
-          get: async (ref) => { assert.equal(changes.length, 0, 'all reads must precede writes'); return snapshot(ref); },
+          get: async (ref) => { assert.equal(changes.length, 0, 'all reads must precede writes'); return ref._query ? ref.get() : snapshot(ref); },
           create: (ref, data) => { if (docs.has(ref.path)) throw new Error('exists'); changes.push(() => docs.set(ref.path, data)); },
           update: (ref, data) => { if (!docs.has(ref.path)) throw new Error('missing'); changes.push(() => docs.set(ref.path, { ...docs.get(ref.path), ...data })); },
           set: (ref, data, opts) => changes.push(() => docs.set(ref.path, opts?.merge ? { ...(docs.get(ref.path) || {}), ...data } : data)),
@@ -53,7 +59,7 @@ function harness() {
   const names = [...source.matchAll(/const (asistencia\w+) = endpoint/g)].map((m) => m[1]);
   const deps = { initializeApp: () => {}, getFirestore: () => db, getStorage: () => storage,
     getAuth: () => auth, onCall: (_options, handler) => handler, onSchedule: (_options, handler) => handler,
-    HttpsError, Timestamp: Stamp, createHash, randomBytes, scryptSync, timingSafeEqual, ...domain, ...presets };
+    HttpsError, Timestamp: Stamp, createHash, randomBytes, scryptSync, timingSafeEqual, ...domain, ...presets, ...operacion };
   const handlers = new Function(...Object.keys(deps), `${source}\nreturn {${names.join(',')}};`)(...Object.values(deps));
   const uid = 'operador'; const empleadoId = 'emp_prueba';
   docs.set(`usuarios/${uid}`, { activo: true, rol: 'asistencia', nombre: 'Seguridad Mexico', propiedadesPermitidas: ['mexico'] });
@@ -273,20 +279,19 @@ test('backend: security can mark missing exit and start a new eventual shift wit
   await h.handlers.asistenciaConsultarEmpleado({
     auth: { uid: 'operador' }, data: { propiedadId: 'hrm', clave: 'P01' },
   });
-  const result = await h.handlers.asistenciaResolverTurnoPendiente({
+  const result = await h.handlers.asistenciaEnviarTurnoRevision({
     auth: { uid: 'operador' },
     data: { solicitudId: 'ev_new', empleadoId: 'emp_prueba', propiedadId: 'hrm', jornadaPendienteId: 'ev_old' },
   });
-  assert.equal(result.tipo, 'entrada');
-  assert.equal(result.turnoAnteriorSinSalida, true);
-  assert.equal(h.docs.get('asistenciaJornadas/ev_old').estado, 'sin_salida');
-  assert.equal(h.docs.get('asistenciaJornadas/ev_old').salidaEn, null);
-  assert.equal(h.docs.get('asistenciaJornadas/ev_new').estado, 'abierta');
-  assert.equal(h.docs.get('asistenciaEstado/emp_prueba').jornadaAbiertaId, 'ev_new');
+  assert.equal(result.ok,true);
+  assert.equal(h.docs.get('asistenciaJornadas/ev_old').salidaEn,null);
+  assert.equal(h.docs.get('asistenciaJornadas/ev_old').requiereRevision,true);
+  assert.equal(h.docs.get('asistenciaEstado/emp_prueba').jornadaAbiertaId,null);
+  await h.handlers.asistenciaRegistrarMovimiento(h.request('ev_new_normal','entrada',{propiedadId:'hrm',fotoPath:'',validacionPin:''}));
+  assert.equal(h.docs.get('asistenciaEstado/emp_prueba').jornadaAbiertaId,'ev_new_normal');
 });
 
-
-test('backend: RH can mark an old eventual shift as no exit and remove it from operational pending state', async () => {
+test('backend: legacy RH missing-exit correction now requires a supporting document', async () => {
   const h = harness();
   h.docs.set('usuarios/operador', { activo: true, rol: 'guardia', modulosPermitidos: ['asistencia'], propiedadesPermitidas: ['hrm'], nombre: 'Guardia' });
   h.docs.set('propiedades/hrm', { activo: true, nombre: 'HRM', asistencia: { zonaHoraria: 'America/Mexico_City' } });
@@ -302,19 +307,14 @@ test('backend: RH can mark an old eventual shift as no exit and remove it from o
     activo: true, rol: 'rh', nombre: 'RH', perfilAcceso: 'rh', propiedadesPermitidas: ['hrm'],
     permisosSistema: [presets.PERMISOS.REPORTES_EVENTUALES, presets.PERMISOS.RESOLVER_TURNOS_EVENTUALES],
   });
-  const result = await h.handlers.asistenciaResolverTurnoAdministrativo({
-    auth: { uid: 'rh1' },
-    data: { jornadaId: 'ev_rh_old', accion: 'sin_salida', motivo: 'El eventual no registró salida y RH cerró el pendiente.' },
-  });
-  assert.equal(result.estado, 'sin_salida');
-  const row = h.docs.get('asistenciaJornadas/ev_rh_old');
-  assert.equal(row.estado, 'sin_salida');
-  assert.equal(row.salidaEn, null);
-  assert.equal(row.resueltoAdministrativamente, true);
-  assert.equal(h.docs.get('asistenciaEstado/emp_prueba').jornadaAbiertaId, null);
+  await assert.rejects(h.handlers.asistenciaResolverTurnoAdministrativo({
+    auth:{uid:'rh1'},data:{jornadaId:'ev_rh_old',accion:'sin_salida',motivo:'Correccion sin adjuntar el documento obligatorio.'}
+  }),/respaldo/);
+  assert.equal(h.docs.get('asistenciaJornadas/ev_rh_old').salidaEn,null);
+
 });
 
-test('backend: RH can correct the real exit time of a pending eventual shift and recalculate duration', async () => {
+test('backend: legacy RH exit correction cannot bypass supporting-document review', async () => {
   const h = harness();
   h.docs.set('usuarios/operador', { activo: true, rol: 'guardia', modulosPermitidos: ['asistencia'], propiedadesPermitidas: ['hrm'], nombre: 'Guardia' });
   h.docs.set('propiedades/hrm', { activo: true, nombre: 'HRM', asistencia: { zonaHoraria: 'America/Mexico_City' } });
@@ -330,21 +330,11 @@ test('backend: RH can correct the real exit time of a pending eventual shift and
     activo: true, rol: 'rh', nombre: 'RH', perfilAcceso: 'rh', propiedadesPermitidas: ['hrm'],
     permisosSistema: [presets.PERMISOS.REPORTES_EVENTUALES, presets.PERMISOS.RESOLVER_TURNOS_EVENTUALES],
   });
-  const result = await h.handlers.asistenciaResolverTurnoAdministrativo({
-    auth: { uid: 'rh1' },
-    data: {
-      jornadaId: 'ev_rh_correct',
-      accion: 'corregir_salida',
-      salidaIso: '2026-09-07T23:00:00.000Z',
-      motivo: 'RH confirmó la salida real con el responsable del evento.',
-    },
-  });
-  assert.equal(result.estado, 'corregida');
-  assert.equal(result.minutos, 480);
-  const row = h.docs.get('asistenciaJornadas/ev_rh_correct');
-  assert.equal(row.estado, 'corregida');
-  assert.equal(row.minutos, 480);
-  assert.equal(row.resueltoAdministrativamente, true);
+  await assert.rejects(h.handlers.asistenciaResolverTurnoAdministrativo({
+    auth:{uid:'rh1'},data:{jornadaId:'ev_rh_correct',accion:'corregir_salida',salidaIso:'2026-09-07T23:00:00.000Z',motivo:'No se debe corregir sin el documento adjunto.'}
+  }),/respaldo/);
+  assert.equal(h.docs.get('asistenciaJornadas/ev_rh_correct').salidaEn,null);
+
 });
 
 test('backend: Nominas cannot resolve eventual shifts', async () => {

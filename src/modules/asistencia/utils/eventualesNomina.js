@@ -1,3 +1,4 @@
+import { revisionJornada, tiempoMs } from '../../../../shared/operacionEventuales.js';
 function pad(value) {
   return String(value).padStart(2, '0');
 }
@@ -48,7 +49,9 @@ export function rangoSemanaISO(value) {
 }
 
 export function minutosJornada(row) {
-  const explicit = Number(row?.minutos);
+  const inicioMs=tiempoMs(row?.entradaEn),finMs=tiempoMs(row?.salidaEn);
+  if(inicioMs!==null&&finMs!==null&&finMs>=inicioMs) return Math.floor((finMs-inicioMs)/60000);
+  const explicit = row?.minutos == null ? NaN : Number(row?.minutos);
   if (Number.isFinite(explicit) && explicit >= 0) return explicit;
 
   const entrada = fechaDesdeValor(row?.entradaEn);
@@ -66,6 +69,26 @@ export function horasPagablesDesdeMinutos(minutos) {
   return horas + (minutosRestantes >= 50 ? 1 : 0);
 }
 
+export function minutosTurnoProgramado(row) {
+  const explicit = Number(row?.minutosTurnoPlanificado ?? row?.minutosDuracionPlanificada ?? 0);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  const inicio = String(row?.horaInicioPlanificada || '');
+  const fin = String(row?.horaFinPlanificada || '');
+  if (!/^\d{2}:\d{2}$/.test(inicio) || !/^\d{2}:\d{2}$/.test(fin)) return 0;
+  const [ih, im] = inicio.split(':').map(Number);
+  const [fh, fm] = fin.split(':').map(Number);
+  let value = (fh * 60 + fm) - (ih * 60 + im);
+  if (value <= 0) value += 24 * 60;
+  return value;
+}
+
+export function turnoProgramadoTexto(row) {
+  const inicio = String(row?.horaInicioPlanificada || '').trim();
+  const fin = String(row?.horaFinPlanificada || '').trim();
+  if (!inicio || !fin) return 'SIN TURNO';
+  return `${inicio} - ${fin}${row?.cruzaDiaPlanificado === true ? ' (+1 día)' : ''}`;
+}
+
 function esSabado(fecha) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(fecha || ''))) return false;
   const [year, month, day] = fecha.split('-').map(Number);
@@ -81,7 +104,8 @@ function esAlbanil(puesto = '') {
 }
 
 export function calcularJornadaPagable(row) {
-  const cerrada = ['completa', 'corregida'].includes(row?.estado) && row?.salidaEn;
+  const revision = revisionJornada(row);
+  const cerrada = revision.pagable;
   const minutos = cerrada ? minutosJornada(row) : null;
   const horasReales = minutos === null ? 0 : minutos / 60;
   let horasPagables = minutos === null ? 0 : horasPagablesDesdeMinutos(minutos);
@@ -91,8 +115,11 @@ export function calcularJornadaPagable(row) {
     horasPagables = 8;
   }
 
-  const horasNormales = Math.min(8, horasPagables);
-  const horasExtra = Math.max(0, horasPagables - 8);
+  const minutosProgramados = minutosTurnoProgramado(row);
+  const horasTurnoProgramado = minutosProgramados > 0 ? minutosProgramados / 60 : 0;
+  const limiteNormal = horasTurnoProgramado > 0 ? horasTurnoProgramado : 8;
+  const horasNormales = Math.min(limiteNormal, horasPagables);
+  const horasExtra = Math.max(0, horasPagables - limiteNormal);
   const tarifa = Number(row?.tarifaHoraAplicada || 0);
   const pagoNormal = horasNormales * tarifa;
   // La hora extra se paga a la misma tarifa de la hora normal.
@@ -104,11 +131,16 @@ export function calcularJornadaPagable(row) {
     horasPagables,
     horasNormales,
     horasExtra,
+    horasTurnoProgramado,
+    limiteNormal,
     tarifa,
     pagoNormal,
     pagoExtra,
     total: pagoNormal + pagoExtra,
-    pendiente: !cerrada,
+    pendiente: !cerrada && !revision.sinSalidaResuelta,
+    sinSalidaResuelta: revision.sinSalidaResuelta,
+    pagable: cerrada,
+    requiereRevision: revision.requiereRevision,
   };
 }
 
@@ -123,7 +155,7 @@ export function resumirSemanaEventuales(rows, rango) {
       id,
       empleadoId: row.empleadoId || '',
       clave: row.claveEmpleado || '',
-      nombre: row.empleadoNombre || 'Sin nombre',
+      nombre: String(row.empleadoNombre || 'Sin nombre').toLocaleUpperCase('es-MX'),
       puesto: row.puestoNombre || 'Sin puesto',
       area: row.area || '',
       tarifa: Number(row.tarifaHoraAplicada || 0),
@@ -142,11 +174,12 @@ export function resumirSemanaEventuales(rows, rango) {
     const calc = calcularJornadaPagable(row);
     const fecha = row.fechaJornada || fechaLocalISO(fechaDesdeValor(row.entradaEn) || new Date());
 
+    if (item.puesto !== (row.puestoNombre || 'Sin puesto')) item.puesto = 'Varios puestos';
     item.tarifa = calc.tarifa || item.tarifa;
     item.jornadas.push({ ...row, calculoPago: calc });
     item.fechas[fecha] = (item.fechas[fecha] || 0) + calc.total;
 
-    if (!calc.pendiente) item.diasTrabajados += 1;
+    if (calc.pagable) item.diasTrabajados += 1;
     if (calc.pendiente) item.pendientes += 1;
 
     item.horasPagables += calc.horasPagables;

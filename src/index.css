@@ -3116,7 +3116,8 @@ h1, h2, h3, p { margin: 0; }
 }
 
 /* ===== Reporte semanal de Eventuales ===== */
-.weekly-eventuales-report { display: grid; gap: 18px; margin-top: 18px; }
+.weekly-eventuales-report { display: grid; gap: 18px; margin-top: 18px; width: 100%; max-width: 100%; min-width: 0; }
+.weekly-eventuales-report > * { width: 100%; max-width: 100%; min-width: 0; }
 .weekly-report-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 20px; border: 1px solid var(--border); border-radius: 20px; background: #fff; }
 .weekly-report-header h2 { margin: 4px 0 6px; color: var(--navy); }
 .weekly-report-header p { margin: 0; color: var(--muted); }
@@ -3133,7 +3134,7 @@ h1, h2, h3, p { margin: 0; }
 .weekly-kpis strong { color: var(--navy); font-size: 1.4rem; }
 .weekly-kpis .warning { border-color: #f2d38b; background: #fff9e8; }
 .weekly-rule-note { padding: 14px 16px; border-radius: 14px; background: #eef6f8; color: #31586a; font-weight: 750; line-height: 1.45; }
-.weekly-table-wrap { overflow: auto; border: 1px solid var(--border); border-radius: 16px; background: #fff; }
+.weekly-table-wrap { width: 100%; max-width: 100%; min-width: 0; overflow: auto; border: 1px solid var(--border); border-radius: 16px; background: #fff; }
 .weekly-table { width: 100%; min-width: 1180px; border-collapse: collapse; }
 .weekly-table th, .weekly-table td { padding: 11px 10px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; font-size: .86rem; }
 .weekly-table th:first-child, .weekly-table td:first-child,
@@ -3482,28 +3483,29 @@ h1, h2, h3, p { margin: 0; }
 
 .planning-week-grid {
   display: grid;
-  grid-template-columns: repeat(7, minmax(250px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(7, minmax(210px, 1fr));
+  gap: 8px;
+  align-items: start;
   overflow-x: auto;
   padding-bottom: 8px;
 }
 
 .planning-day-card {
-  min-width: 250px;
+  min-width: 210px;
   border: 1px solid #dbe4ea;
-  border-radius: 22px;
+  border-radius: 16px;
   background: #fff;
   overflow: hidden;
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.035);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.03);
 }
 
 .planning-day-card > header {
-  padding: 14px;
+  padding: 10px;
   background: #f4f9fa;
   border-bottom: 1px solid #e3ebf0;
   display: flex;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
 }
 
@@ -3560,21 +3562,21 @@ h1, h2, h3, p { margin: 0; }
 
 .planning-need-list {
   display: grid;
-  gap: 10px;
-  padding: 10px;
+  gap: 7px;
+  padding: 7px;
 }
 
 .planning-need-card {
-  padding: 12px;
+  padding: 9px;
   border: 1px solid #e1e8ed;
-  border-radius: 17px;
+  border-radius: 13px;
   background: #fff;
 }
 
 .planning-need-top {
   display: flex;
   justify-content: space-between;
-  gap: 10px;
+  gap: 6px;
   align-items: flex-start;
 }
 
@@ -3587,34 +3589,36 @@ h1, h2, h3, p { margin: 0; }
 .planning-time {
   color: #247f91;
   font-weight: 900;
-  font-size: 0.78rem;
+  font-size: 0.72rem;
 }
 
 .planning-need-top strong {
-  margin-top: 3px;
+  margin-top: 2px;
   color: #10283a;
-  font-size: 1rem;
+  font-size: 0.88rem;
+  line-height: 1.1;
 }
 
 .planning-need-top small {
-  margin-top: 4px;
+  margin-top: 2px;
   color: #64748b;
+  font-size: 0.72rem;
   font-weight: 700;
 }
 
 .planning-staff-status {
-  margin-top: 10px;
+  margin-top: 6px;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px;
-  font-size: 0.76rem;
+  gap: 4px;
+  font-size: 0.68rem;
   color: #64748b;
 }
 
 .planning-staff-status > span:last-child {
   grid-column: 1 / -1;
-  padding: 6px 8px;
-  border-radius: 9px;
+  padding: 4px 6px;
+  border-radius: 7px;
   text-align: center;
   font-weight: 900;
 }
@@ -3630,33 +3634,46 @@ h1, h2, h3, p { margin: 0; }
 }
 
 .planning-assigned-list {
-  margin-top: 8px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
+  margin-top: 6px;
+  display: grid;
+  gap: 3px;
 }
 
 .planning-assigned-list span {
-  padding: 5px 8px;
-  border-radius: 999px;
+  min-width: 0;
+  padding: 4px 6px;
+  border-radius: 7px;
   background: #eef6f8;
   color: #27576a;
-  font-size: 0.72rem;
+  font-size: 0.66rem;
   font-weight: 800;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planning-assigned-list .planning-assigned-more {
+  background: #f3f5f7;
+  color: #64748b;
+  text-align: center;
 }
 
 .planning-assign-button {
   width: 100%;
-  margin-top: 9px;
+  min-height: 30px;
+  margin-top: 6px;
+  padding: 0 7px;
   justify-content: center;
+  font-size: 0.72rem;
 }
 
 .planning-day-card > footer {
-  padding: 10px 12px;
+  padding: 7px 9px;
   border-top: 1px solid #edf1f4;
   background: #fbfcfd;
   color: #64748b;
-  font-size: 0.76rem;
+  font-size: 0.68rem;
   text-align: right;
 }
 
@@ -4182,5 +4199,101 @@ h1, h2, h3, p { margin: 0; }
 @media (max-width: 620px) {
   .planning-replacement-summary {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ===== Registro publico e importacion de Eventuales ===== */
+.eventual-tools-row { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0 18px; }
+.eventual-request-list { display: grid; gap: 10px; }
+.eventual-request-card { display: flex; justify-content: space-between; gap: 16px; align-items: center; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: #fff; }
+.eventual-request-card > div:first-child { display: grid; gap: 3px; }
+.eventual-request-card span, .eventual-request-card small { color: var(--muted); }
+.eventual-import-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+.eventual-file-button { position: relative; overflow: hidden; cursor: pointer; }
+.eventual-file-button input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.eventual-import-preview { margin-top: 14px; }
+.public-eventual-page { min-height: 100vh; background: linear-gradient(180deg, #eef4f7 0%, #f8fafb 100%); padding: 32px 16px; display: grid; place-items: start center; }
+.public-eventual-card { width: min(720px, 100%); background: #fff; border: 1px solid #dce5ea; border-radius: 22px; box-shadow: 0 18px 50px rgba(16, 40, 58, .10); padding: 24px; }
+.public-eventual-brand { display: flex; align-items: center; gap: 12px; color: #10283a; border-bottom: 1px solid #e6ecef; padding-bottom: 16px; margin-bottom: 20px; }
+.public-eventual-brand div { display: grid; gap: 2px; }
+.public-eventual-brand span { color: #697586; font-size: .92rem; }
+.public-eventual-form { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.public-eventual-form > div:first-child, .public-eventual-form > .public-eventual-check, .public-eventual-form > button { grid-column: 1 / -1; }
+.public-eventual-form h1, .public-eventual-status h1 { margin: 8px 0 6px; color: #10283a; }
+.public-eventual-form p, .public-eventual-status p { color: #697586; }
+.public-eventual-form label { display: grid; gap: 7px; color: #243b4a; font-weight: 700; }
+.public-eventual-form input, .public-eventual-form select { width: 100%; min-height: 46px; border: 1px solid #cbd8df; border-radius: 10px; padding: 10px 12px; font: inherit; background: white; }
+.public-eventual-check { display: flex !important; grid-template-columns: auto 1fr; align-items: start; font-weight: 500 !important; }
+.public-eventual-check input { width: 20px; min-height: 20px; margin-top: 2px; }
+.public-eventual-status { text-align: center; display: grid; justify-items: center; gap: 10px; padding: 18px 0; }
+.public-eventual-status > svg { color: #1f6b7a; }
+.public-eventual-qr { display: grid; justify-items: center; gap: 8px; padding: 12px; border: 1px solid #dbe5ea; border-radius: 16px; background: #fff; }
+.public-eventual-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 8px; }
+@media (max-width: 680px) { .public-eventual-form { grid-template-columns: 1fr; } .public-eventual-form > * { grid-column: 1 !important; } .eventual-request-card { align-items: stretch; flex-direction: column; } }
+
+/* Nota de alcance del formulario público de Eventuales (fase 1). */
+.public-eventual-all-properties {
+  grid-column: 1 / -1;
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  background: #eef5f7;
+  color: #1b5369;
+  line-height: 1.5;
+}
+
+/* Registro inmediato eventual: fotografia de identificacion privada */
+.public-eventual-photo-field { grid-column: 1 / -1; }
+.public-eventual-photo-field small { font-weight: 400; }
+.public-eventual-photo { width: 155px; height: 155px; border-radius: 50%; object-fit: cover; border: 3px solid #d3e3eb; justify-self: center; background: #f2f6f8; }
+.public-eventual-privacy { font-size: .85rem; }
+.asistencia-foto-identidad { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 10px; border-radius: 12px; background: #eef5f7; }
+.asistencia-foto-identidad img { width: 130px; height: 130px; object-fit: cover; border-radius: 12px; }
+
+.asistencia-cotejo-checkbox {display:flex;gap:9px;align-items:center; padding:12px; border:1px solid #92b6c5; border-radius:10px; font-weight:700;}
+.asistencia-cotejo-checkbox input { width:22px; height:22px; flex:0 0 auto;}
+
+/* ===== Ajuste UI 28/10/2026: contencion de reportes y planeacion compacta ===== */
+.weekly-report-toolbar > *,
+.weekly-kpis > *,
+.weekly-control-grid > * {
+  min-width: 0;
+}
+
+.planning-summary-grid article {
+  min-height: 88px;
+  padding: 12px;
+  border-radius: 16px;
+  gap: 4px 8px;
+}
+
+.planning-summary-grid article svg {
+  width: 18px;
+  height: 18px;
+}
+
+.planning-summary-grid article strong {
+  font-size: 1.18rem;
+}
+
+.planning-day-card .icon-button {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+
+.planning-day-card > header span {
+  font-size: 0.72rem;
+}
+
+.planning-day-card > header strong {
+  font-size: 0.82rem;
+}
+
+@media (max-width: 620px) {
+  .planning-week-grid {
+    grid-template-columns: repeat(7, minmax(200px, 1fr));
+  }
+  .planning-day-card {
+    min-width: 200px;
   }
 }

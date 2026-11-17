@@ -3,6 +3,8 @@ export const PERMISOS = {
   ADMINISTRAR_PUESTOS: 'configuracion.puestos',
   ADMINISTRAR_HORARIOS: 'configuracion.horarios',
   PLANEACION_PERSONAL: 'rh.planeacion_personal',
+  SOLICITAR_PERSONAL: 'rh.solicitar_personal',
+  AUTORIZAR_REQUISICIONES_PERSONAL: 'rh.autorizar_requisiciones_personal',
   RESOLVER_TURNOS_EVENTUALES: 'asistencia.resolver_turnos_eventuales',
   REPORTES_RECORRIDOS: 'reportes.recorridos',
   REPORTES_INCIDENCIAS: 'reportes.incidencias',
@@ -19,6 +21,8 @@ export const CATALOGO_PERMISOS = [
   { value: PERMISOS.ADMINISTRAR_PUESTOS, label: 'Crear y modificar puestos y tarifas', grupo: 'Asistencia / RH' },
   { value: PERMISOS.ADMINISTRAR_HORARIOS, label: 'Crear y modificar horarios', grupo: 'Planeación de personal' },
   { value: PERMISOS.PLANEACION_PERSONAL, label: 'Programar necesidades y asignar Eventuales', grupo: 'Planeación de personal' },
+  { value: PERMISOS.SOLICITAR_PERSONAL, label: 'Crear requisiciones de personal eventual', grupo: 'Requisiciones de personal' },
+  { value: PERMISOS.AUTORIZAR_REQUISICIONES_PERSONAL, label: 'Autorizar o rechazar requisiciones de personal', grupo: 'Requisiciones de personal' },
   { value: PERMISOS.RESOLVER_TURNOS_EVENTUALES, label: 'Resolver y corregir turnos de Eventuales', grupo: 'Asistencia / RH' },
   { value: PERMISOS.REPORTES_EVENTUALES, label: 'Reporte semanal de Eventuales y pagos', grupo: 'Asistencia / RH' },
   { value: PERMISOS.REPORTES_PRACTICANTES, label: 'Reporte de Practicantes', grupo: 'Asistencia / RH' },
@@ -37,11 +41,16 @@ export const PERMISOS_MAXIMOS_ROL = {
     PERMISOS.REPORTES_RECORRIDOS,
     PERMISOS.REPORTES_INCIDENCIAS,
   ],
+  solicitante: [
+    PERMISOS.SOLICITAR_PERSONAL,
+  ],
   rh: [
     PERMISOS.ADMINISTRAR_PERSONAL,
     PERMISOS.ADMINISTRAR_PUESTOS,
     PERMISOS.ADMINISTRAR_HORARIOS,
     PERMISOS.PLANEACION_PERSONAL,
+    PERMISOS.SOLICITAR_PERSONAL,
+    PERMISOS.AUTORIZAR_REQUISICIONES_PERSONAL,
     PERMISOS.RESOLVER_TURNOS_EVENTUALES,
     PERMISOS.REPORTES_EVENTUALES,
     PERMISOS.REPORTES_PRACTICANTES,
@@ -83,6 +92,13 @@ export const PERFILES_ACCESO = [
     permisos: [PERMISOS.REPORTES_RECORRIDOS, PERMISOS.REPORTES_INCIDENCIAS],
   },
   {
+    value: 'solicitante_personal',
+    label: 'Solicitante de personal',
+    rol: 'solicitante',
+    asistencia: false,
+    permisos: [PERMISOS.SOLICITAR_PERSONAL],
+  },
+  {
     value: 'rh',
     label: 'Recursos Humanos',
     rol: 'rh',
@@ -92,6 +108,8 @@ export const PERFILES_ACCESO = [
       PERMISOS.ADMINISTRAR_PUESTOS,
       PERMISOS.ADMINISTRAR_HORARIOS,
       PERMISOS.PLANEACION_PERSONAL,
+      PERMISOS.SOLICITAR_PERSONAL,
+      PERMISOS.AUTORIZAR_REQUISICIONES_PERSONAL,
       PERMISOS.RESOLVER_TURNOS_EVENTUALES,
       PERMISOS.REPORTES_EVENTUALES,
       PERMISOS.REPORTES_PRACTICANTES,
@@ -173,6 +191,7 @@ export function identificarPerfilAcceso(user = {}) {
   }
   if (user?.rol === 'asistencia') return 'seguridad_mexico';
   if (user?.rol === 'administrador') return 'administrador';
+  if (user?.rol === 'solicitante') return 'solicitante_personal';
   if (user?.rol === 'rh') return 'rh';
   if (user?.rol === 'nominas') return 'nominas';
   const extra = Array.isArray(user?.modulosPermitidos) && user.modulosPermitidos.includes('asistencia');

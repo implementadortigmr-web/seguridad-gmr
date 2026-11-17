@@ -58,3 +58,5 @@ export function copiarDiaPlaneacion(data) {
 export function copiarSemanaPlaneacion(data) {
   return call('planeacionCopiarSemana', data);
 }
+
+export function guardarNecesidadesVariosDias(data) { return call('planeacionGuardarNecesidadesVariosDias', data); }

@@ -53,7 +53,9 @@ test('keys retain leading zeroes and accents normalize', () => { assert.equal(no
 test('catalog fields validated', () => {
   assert.throws(() => validarPersonal({ clave: 'x', nombre: 'a', tipo: 'administrador' }));
   assert.throws(() => validarPersonal({ clave: 'bad/code', nombre: 'a', tipo: 'eventual' }));
-  assert.equal(validarPersonal({ clave: '00036', nombre: 'Nombre', tipo: 'eventual', puestoId: 'mesero' }).clave, '00036');
+  const eventual = validarPersonal({ clave: '00036', nombre: 'Nombre Apellido', tipo: 'eventual', puestoId: 'mesero' });
+  assert.equal(eventual.clave, '00036');
+  assert.equal(eventual.nombre, 'NOMBRE APELLIDO');
 });
 test('Mexico dates use property timezone, not UTC date', () => { assert.equal(fechaEnZona(new Date('2026-09-08T02:00:00Z')), '2026-09-07'); });
 test('photo requirement comes from property, not account', () => {

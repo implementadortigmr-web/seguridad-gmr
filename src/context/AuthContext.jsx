@@ -11,7 +11,7 @@ import { auth, db } from "../services/firebase";
 
 const AuthContext = createContext(null);
 
-const VALID_ROLES = ["administrador", "supervisor", "rh", "nominas", "guardia", "asistencia"];
+const VALID_ROLES = ["administrador", "supervisor", "rh", "solicitante", "nominas", "guardia", "asistencia"];
 const PROFILE_CACHE_PREFIX = "seguridadGmr.profile.";
 
 function getReadableAuthError(error) {

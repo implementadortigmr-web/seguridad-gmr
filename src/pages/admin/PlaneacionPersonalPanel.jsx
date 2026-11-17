@@ -1,4 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import ReportesPlaneacion from './ReportesPlaneacion';
+import { tarifaPlanificada } from '../../../shared/operacionEventuales';
+import { crearHojaRegistroPDF } from '../../services/pdfPlaneacionService';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import {
   CalendarDays,
   Clock3,
@@ -24,6 +27,7 @@ import {
   copiarSemanaPlaneacion,
   eliminarNecesidadPersonal,
   guardarNecesidadPersonal,
+  guardarNecesidadesVariosDias,
   listarPlaneacionSemana,
   listarSeguimientoPlaneacionSemana,
   quitarAsignacionPlaneacion,
@@ -73,9 +77,7 @@ function costoPlaneadoNecesidad(need, assigned = []) {
   const tarifaBase = Number(need?.tarifaHora || 0);
   const asignados = Array.isArray(assigned) ? assigned : [];
   const costoAsignado = asignados.reduce((sum, item) => {
-    const tarifa = Number.isFinite(Number(item?.tarifaHoraPlanificada))
-      ? Number(item.tarifaHoraPlanificada)
-      : tarifaBase;
+    const tarifa = tarifaPlanificada(item,need);
     return sum + (horas * tarifa);
   }, 0);
   const faltantes = Math.max(0, cantidad - asignados.length);
@@ -122,6 +124,8 @@ export default function PlaneacionPersonalPanel({ propiedades = [], setMessage }
     [propiedades]
   );
 
+  const requestSeq=useRef(0), trackingSeq=useRef(0);
+  const [loadedKey,setLoadedKey]=useState('');
   const [propiedadId, setPropiedadId] = useState('');
   const [semanaInicio, setSemanaInicio] = useState(mondayOf());
   const [data, setData] = useState({ necesidades: [], asignaciones: [], horarios: [], puestos: [], eventuales: [] });
@@ -134,6 +138,8 @@ export default function PlaneacionPersonalPanel({ propiedades = [], setMessage }
   const [needOpen, setNeedOpen] = useState(false);
   const [editingNeedId, setEditingNeedId] = useState('');
   const [needForm, setNeedForm] = useState(NEED_EMPTY);
+  const [fechasNecesidad,setFechasNecesidad]=useState([]);
+  const [otraFecha,setOtraFecha]=useState('');
 
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignNeed, setAssignNeed] = useState(null);
@@ -151,11 +157,14 @@ export default function PlaneacionPersonalPanel({ propiedades = [], setMessage }
     if (!propiedadId && usableProperties.length === 1) setPropiedadId(usableProperties[0].id);
   }, [usableProperties, propiedadId]);
 
-  async function load({ quiet = false } = {}) {
-    if (!propiedadId) return;
-    if (!quiet) setLoading(true);
+  async function load() {
+    const seq=++requestSeq.current;
+    if (!propiedadId) { setData({necesidades:[],asignaciones:[],horarios:[],puestos:[],eventuales:[]});setLoadedKey('');setLoading(false);return; }
+    setLoading(true);setLoadedKey('');
     try {
       const result = await listarPlaneacionSemana({ propiedadId, semanaInicio });
+      if(seq!==requestSeq.current)return;
+      setLoadedKey(`${propiedadId}|${semanaInicio}`);
       setData({
         necesidades: Array.isArray(result?.necesidades) ? result.necesidades : [],
         asignaciones: Array.isArray(result?.asignaciones) ? result.asignaciones : [],
@@ -164,19 +173,21 @@ export default function PlaneacionPersonalPanel({ propiedades = [], setMessage }
         eventuales: Array.isArray(result?.eventuales) ? result.eventuales : [],
       });
     } catch (error) {
-      setMessage?.(error?.message || 'No fue posible cargar la planeación.');
+      if(seq===requestSeq.current) {setData({necesidades:[],asignaciones:[],horarios:[],puestos:[],eventuales:[]});setMessage?.(error?.message || 'No fue posible cargar la planeación.');}
     } finally {
-      if (!quiet) setLoading(false);
+      if(seq===requestSeq.current)setLoading(false);
     }
   }
 
-  useEffect(() => { load(); }, [propiedadId, semanaInicio]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setNeedOpen(false);setAssignOpen(false);setReplacementOpen(false);load();return ()=>{requestSeq.current++;}; }, [propiedadId, semanaInicio]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadTracking() {
-    if (!propiedadId) return;
+    const seq=++trackingSeq.current;
+    if (!propiedadId) {setTracking({seguimiento:[],sinProgramacion:[],resumen:{}});setTrackingLoading(false);return;}
     setTrackingLoading(true);
     try {
       const result = await listarSeguimientoPlaneacionSemana({ propiedadId, semanaInicio });
+      if(seq!==trackingSeq.current)return;
       setTracking({
         seguimiento: Array.isArray(result?.seguimiento) ? result.seguimiento : [],
         sinProgramacion: Array.isArray(result?.sinProgramacion) ? result.sinProgramacion : [],
@@ -185,14 +196,15 @@ export default function PlaneacionPersonalPanel({ propiedades = [], setMessage }
         criterioRetardoMinutos: Number(result?.criterioRetardoMinutos || 0),
       });
     } catch (error) {
-      setMessage?.(error?.message || 'No fue posible comparar la planeación con la asistencia real.');
+      if(seq===trackingSeq.current) {setTracking({seguimiento:[],sinProgramacion:[],resumen:{}});setMessage?.(error?.message || 'No fue posible comparar la planeación con la asistencia real.');}
     } finally {
-      setTrackingLoading(false);
+      if(seq===trackingSeq.current)setTrackingLoading(false);
     }
   }
 
   useEffect(() => {
     if (viewMode === 'seguimiento') loadTracking();
+    return ()=>{trackingSeq.current++;};
   }, [viewMode, propiedadId, semanaInicio]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const dias = useMemo(() => Array.from({ length: 7 }, (_, index) => addDays(semanaInicio, index)), [semanaInicio]);
@@ -225,6 +237,7 @@ export default function PlaneacionPersonalPanel({ propiedades = [], setMessage }
 
   function openNewNeed(fecha = dias[0]) {
     setEditingNeedId('');
+    setFechasNecesidad([fecha]);
     setNeedForm({ ...NEED_EMPTY, fecha, horarioId: horariosActivos[0]?.id || '', puestoId: puestosActivos[0]?.id || '' });
     setNeedOpen(true);
   }
@@ -247,7 +260,8 @@ export default function PlaneacionPersonalPanel({ propiedades = [], setMessage }
     setBusy(true);
     setMessage?.('');
     try {
-      await guardarNecesidadPersonal({
+      const result = await (editingNeedId ? guardarNecesidadPersonal : guardarNecesidadesVariosDias)({
+        ...(!editingNeedId ? {fechas:fechasNecesidad.length?fechasNecesidad:[needForm.fecha]} : {}),
         necesidadId: editingNeedId || '',
         propiedadId,
         ...needForm,
@@ -256,7 +270,7 @@ export default function PlaneacionPersonalPanel({ propiedades = [], setMessage }
       setNeedOpen(false);
       setEditingNeedId('');
       await load({ quiet: true });
-      setMessage?.('Necesidad de personal guardada.');
+      setMessage?.(editingNeedId ? 'Necesidad guardada.' : `Se crearon ${result.creadas} necesidades. ${result.omitidas || 0} fechas ya existian y se conservaron sin cambios.`);
     } catch (error) {
       setMessage?.(error?.message || 'No fue posible guardar la necesidad.');
     } finally {
@@ -295,13 +309,18 @@ export default function PlaneacionPersonalPanel({ propiedades = [], setMessage }
     if (!assignNeed) return [];
     const assignedIds = new Set((asignacionesPorNecesidad.get(assignNeed.id) || []).map((item) => item.empleadoId));
     return data.eventuales
-      .filter((person) => person.activo !== false && person.puestoId === assignNeed.puestoId && !assignedIds.has(person.id))
+      .filter((person) => person.activo !== false && !assignedIds.has(person.id))
       .sort((a, b) => String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es'));
   }, [assignNeed, data.eventuales, asignacionesPorNecesidad]);
 
   async function assignEmployee(event) {
     event.preventDefault();
     if (!assignNeed || !selectedEmployee || busy) return;
+    const persona = data.eventuales.find(p=>p.id===selectedEmployee);
+    if (persona?.puestoId !== assignNeed.puestoId) {
+      const ok = await confirmFeedback({title:'Asignar otro puesto',message:`${persona?.nombre} tiene puesto habitual ${persona?.puestoNombre || 'sin puesto'}. Trabajara como ${assignNeed.puestoNombre} a ${money(assignNeed.tarifaHora)}/h en esta asignacion. Su expediente no cambia.`,confirmText:'Asignar con esta tarifa',type:'warning'});
+      if (!ok) return;
+    }
     setBusy(true);
     try {
       await asignarEventualPlaneacion({ necesidadId: assignNeed.id, empleadoId: selectedEmployee });
@@ -482,12 +501,6 @@ export default function PlaneacionPersonalPanel({ propiedades = [], setMessage }
         </button>
       </div>
 
-      <div className="info-box">
-        {viewMode === 'planeacion'
-          ? 'Fase 1: esta pantalla planea necesidades y asignaciones. No modifica checadas ni pagos reales; el costo mostrado es una estimación con las tarifas actuales.'
-          : 'Fase 2: compara lo programado contra las checadas reales de Eventuales. Es solo consulta: no modifica jornadas ni pagos.'}
-      </div>
-
       <div className="planning-controls">
         <label className="field-label">Propiedad
           <select className="text-input" value={propiedadId} onChange={(e) => setPropiedadId(e.target.value)}>
@@ -514,6 +527,8 @@ export default function PlaneacionPersonalPanel({ propiedades = [], setMessage }
           </button>
         )}
       </div>
+
+      {propiedadId && loadedKey===`${propiedadId}|${semanaInicio}` && !loading && viewMode === 'planeacion' && <ReportesPlaneacion propiedad={usableProperties.find(p=>p.id===propiedadId)} semanaInicio={semanaInicio} dias={dias} necesidades={data.necesidades} asignaciones={data.asignaciones} disabled={busy || loading}/> }
 
       {!propiedadId ? (
         <div className="empty-state">Selecciona una propiedad para comenzar.</div>
@@ -575,8 +590,9 @@ export default function PlaneacionPersonalPanel({ propiedades = [], setMessage }
                               </div>
 
                               {assigned.length > 0 && (
-                                <div className="planning-assigned-list">
-                                  {assigned.map((person) => <span key={person.id}>{person.empleadoNombre}</span>)}
+                                <div className="planning-assigned-list" aria-label={`${assigned.length} personas asignadas`}>
+                                  {assigned.slice(0, 3).map((person) => <span key={person.id}>{person.empleadoNombre}</span>)}
+                                  {assigned.length > 3 && <span className="planning-assigned-more">+{assigned.length - 3} más</span>}
                                 </div>
                               )}
 
@@ -789,15 +805,20 @@ export default function PlaneacionPersonalPanel({ propiedades = [], setMessage }
       <FormModal
         open={needOpen}
         title={editingNeedId ? 'Editar necesidad' : 'Agregar necesidad'}
-        subtitle="Selecciona día, horario, puesto y cuántas personas se requieren."
+        subtitle="Selecciona uno o varios dias, horario, puesto y personas necesarias."
         onClose={() => !busy && setNeedOpen(false)}
         busy={busy}
         width="680px"
       >
         <form className="modal-form-grid" onSubmit={saveNeed}>
           <label className="field-label">Fecha
-            <input className="text-input" type="date" required value={needForm.fecha} onChange={(e) => setNeedForm({ ...needForm, fecha: e.target.value })} />
+            <input className="text-input" type="date" required value={needForm.fecha} onChange={(e) => {setNeedForm({ ...needForm, fecha: e.target.value });if(!editingNeedId)setFechasNecesidad([e.target.value]);}} />
           </label>
+          {!editingNeedId && <fieldset className="gmr-planning-dates"><legend>Aplicar tambien en estas fechas</legend>
+            {[...new Set([...dias,...fechasNecesidad])].sort().map(d=><label key={d}><input type="checkbox" checked={fechasNecesidad.includes(d)} onChange={e=>setFechasNecesidad(prev=>e.target.checked?[...prev,d]:prev.filter(x=>x!==d))}/>{fechaCorta(d)}</label>)}
+            <div className="gmr-planning-date-tools"><button type="button" className="secondary-button" onClick={()=>setFechasNecesidad(dias)}>Toda la semana</button><input type="date" value={otraFecha} onChange={e=>setOtraFecha(e.target.value)}/><button type="button" className="secondary-button" disabled={!otraFecha||fechasNecesidad.length>=31} onClick={()=>{setFechasNecesidad(p=>[...new Set([...p,otraFecha])]);setOtraFecha('');}}>Agregar otra fecha</button></div>
+            <small>{fechasNecesidad.length} fechas seleccionadas. Mismo horario, puesto y cantidad. Las necesidades existentes no se sobrescriben.</small>
+          </fieldset>}
           <label className="field-label">Horario
             <select className="text-input" required value={needForm.horarioId} onChange={(e) => setNeedForm({ ...needForm, horarioId: e.target.value })}>
               <option value="">Selecciona horario</option>
@@ -816,7 +837,7 @@ export default function PlaneacionPersonalPanel({ propiedades = [], setMessage }
           <label className="field-label form-full">Observaciones
             <textarea className="textarea-input" rows={3} maxLength={500} value={needForm.observaciones} onChange={(e) => setNeedForm({ ...needForm, observaciones: e.target.value })} placeholder="Opcional" />
           </label>
-          <div className="admin-form-modal-actions form-full"><button className="primary-button" disabled={busy}>{busy ? 'Guardando...' : 'Guardar necesidad'}</button></div>
+          <div className="admin-form-modal-actions form-full"><button className="primary-button" disabled={busy || (!editingNeedId && !fechasNecesidad.length)}>{busy ? 'Guardando...' : editingNeedId ? 'Guardar necesidad' : `Guardar en ${fechasNecesidad.length} dias`}</button></div>
         </form>
       </FormModal>
 
@@ -839,11 +860,13 @@ export default function PlaneacionPersonalPanel({ propiedades = [], setMessage }
               ) : <p className="muted">Todavía no hay Eventuales asignados.</p>}
             </div>
 
+            <p className="muted">Puedes seleccionar Eventuales de cualquier puesto. Se aplica la tarifa del puesto de este turno: {money(assignNeed.tarifaHora)}/h.</p>
+            <button type="button" className="secondary-button" onClick={async()=>{try{const doc=await crearHojaRegistroPDF({propiedad:usableProperties.find(p=>p.id===propiedadId),necesidades:[assignNeed],asignaciones:data.asignaciones});doc.save(`registro_${assignNeed.fecha}.pdf`);}catch(e){setMessage?.(e.message);}}}>Imprimir hoja de este turno</button>
             <form onSubmit={assignEmployee} className="planning-add-assignment">
               <label className="field-label">Eventual disponible
                 <select className="text-input" value={selectedEmployee} onChange={(e) => setSelectedEmployee(e.target.value)} required>
                   <option value="">Selecciona persona</option>
-                  {candidates.map((person) => <option key={person.id} value={person.id}>{person.nombre}</option>)}
+                  {candidates.map((person) => <option key={person.id} value={person.id}>{person.nombre} - {person.puestoNombre || 'Sin puesto habitual'}</option>)}
                 </select>
               </label>
               <button className="primary-button" disabled={busy || !selectedEmployee}>Asignar</button>

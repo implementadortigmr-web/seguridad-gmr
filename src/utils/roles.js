@@ -4,6 +4,7 @@ export function routeForRole(rol) {
   if (normalizedRole === 'administrador') return '/admin';
   if (normalizedRole === 'supervisor') return '/supervisor';
   if (normalizedRole === 'rh') return '/rh';
+  if (normalizedRole === 'solicitante') return '/solicitudes-personal';
   if (normalizedRole === 'nominas') return '/nominas';
   if (normalizedRole === 'guardia') return '/guardia';
   if (normalizedRole === 'asistencia') return '/asistencia';

@@ -315,6 +315,20 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "programacionPersonal",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "empleadoId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "fecha",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": []

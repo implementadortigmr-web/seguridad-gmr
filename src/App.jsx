@@ -10,14 +10,16 @@ const GuardiaDashboard = lazy(() => import('./pages/guardia/GuardiaDashboard'));
 const SupervisorDashboard = lazy(() => import('./pages/SupervisorDashboard'));
 const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'));
 const RHDashboard = lazy(() => import('./pages/rh/RHDashboard'));
+const SolicitudesPersonalDashboard = lazy(() => import('./pages/solicitante/SolicitudesPersonalDashboard'));
 const NominasDashboard = lazy(() => import('./pages/nominas/NominasDashboard'));
 const AsistenciaDashboard = lazy(() => import('./modules/asistencia/AsistenciaDashboard'));
+const RegistroEventualPage = lazy(() => import('./pages/public/RegistroEventualPage'));
 
 function LoadingPage() {
   return <main className="loading-page"><ShieldCheck size={44} /><div className="spinner-ring" /><p>Validando acceso...</p></main>;
 }
 function platformAllows(profile) {
-  const allowed = Capacitor.isNativePlatform() ? ['guardia', 'asistencia'] : ['administrador', 'supervisor', 'rh', 'nominas'];
+  const allowed = Capacitor.isNativePlatform() ? ['guardia', 'asistencia'] : ['administrador', 'supervisor', 'rh', 'solicitante', 'nominas'];
   return allowed.includes(profile?.rol);
 }
 function AccesoNoDisponible() {
@@ -52,12 +54,14 @@ function ProtectedRoute({ allowedRoles, children }) {
 }
 function AppRoutes() {
   return <Routes>
+    <Route path="/registro-eventual" element={<RegistroEventualPage />} />
     <Route path="/" element={<Home />} />
     <Route path="/admin-login" element={<Home />} />
     <Route path="/login" element={<Home />} />
     <Route path="/admin" element={<ProtectedRoute allowedRoles={['administrador']}><AdminDashboard /></ProtectedRoute>} />
     <Route path="/supervisor" element={<ProtectedRoute allowedRoles={['supervisor']}><SupervisorDashboard /></ProtectedRoute>} />
     <Route path="/rh" element={<ProtectedRoute allowedRoles={['rh']}><RHDashboard /></ProtectedRoute>} />
+    <Route path="/solicitudes-personal" element={<ProtectedRoute allowedRoles={['solicitante']}><SolicitudesPersonalDashboard /></ProtectedRoute>} />
     <Route path="/nominas" element={<ProtectedRoute allowedRoles={['nominas']}><NominasDashboard /></ProtectedRoute>} />
     <Route path="/guardia" element={<ProtectedRoute allowedRoles={['guardia']}><GuardiaDashboard /></ProtectedRoute>} />
     <Route path="/asistencia" element={<ProtectedRoute allowedRoles={['asistencia']}><Suspense fallback={<LoadingPage />}><AsistenciaDashboard /></Suspense></ProtectedRoute>} />

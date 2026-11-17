@@ -59,6 +59,7 @@ export default function RegistroAsistencia({
   const [clave, setClave] = useState('');
   const [pin, setPin] = useState('');
   const [draft, setDraft] = useState(null);
+  const [cotejoFotoConfirmado, setCotejoFotoConfirmado] = useState(false);
   const [pendingShift, setPendingShift] = useState(null);
   const [turnosPendientes, setTurnosPendientes] = useState([]);
   const [loadingTurnos, setLoadingTurnos] = useState(false);
@@ -120,6 +121,10 @@ export default function RegistroAsistencia({
 
     setSuccess(null);
   }, [success, propiedad, feedback]);
+
+  useEffect(() => {
+    setCotejoFotoConfirmado(false);
+  }, [draft?.solicitudId]);
 
   useEffect(() => {
     draftRef.current = draft;
@@ -441,6 +446,8 @@ export default function RegistroAsistencia({
 
         empleado: result.empleado,
         tipo: movimientoEfectivo,
+        programacionesDisponibles: result.programacionesDisponibles || [],
+        programacionId: result.programacionesDisponibles?.length === 1 ? result.programacionesDisponibles[0].id : '',
 
         jornadaEsperadaId:
           result.jornadaAbierta?.id || null,
@@ -682,6 +689,15 @@ export default function RegistroAsistencia({
     setProgress('Cerrando turno anterior y registrando nueva entrada...');
 
     try {
+      if(pendingShift.empleado.tipo === 'eventual') {
+        const codigo = pendingShift.empleado.clave;
+        const ok=await feedback.confirm({title:'Enviar turno a revision',message:'El turno anterior quedara sin salida y sin pago, pendiente de RH. Despues se prepara una entrada nueva; confirma identidad y fotografia.',confirmText:'Enviar a revision',type:'warning'});
+        if(!ok)return;
+        await llamarAsistencia('asistenciaEnviarTurnoRevision',{solicitudId:crypto.randomUUID(),empleadoId:pendingShift.empleado.id,propiedadId:propiedad.id,jornadaPendienteId:pendingShift.turno.id});
+        setPendingShift(null);busyRef.current=false;setBusy(false);
+        await buscarClave(codigo);
+        await cargarTurnosPendientes();return;
+      }
       const result = await llamarAsistencia('asistenciaResolverTurnoPendiente', {
         solicitudId: crypto.randomUUID(),
         empleadoId: pendingShift.empleado.id,
@@ -703,6 +719,11 @@ export default function RegistroAsistencia({
 
   async function confirmar() {
     if (!draft || busyRef.current) {
+      return;
+    }
+    if(draft.tipo==='entrada' && draft.programacionesDisponibles?.length>1 && !draft.programacionId) {setError('Selecciona el turno programado que vas a iniciar.');return;}
+    if (draft.empleado?.requiereCotejoVisual && !cotejoFotoConfirmado) {
+      setError('Confirma que la fotografía coincide con la persona presente.');
       return;
     }
 
@@ -815,6 +836,8 @@ export default function RegistroAsistencia({
 
               jornadaRecienteId:
                 current.jornadaRecienteId || null,
+              cotejoFotoConfirmado,
+              programacionId: current.programacionId || '',
             }
           );
       }
@@ -955,16 +978,16 @@ export default function RegistroAsistencia({
             <div><span>Tiempo abierto</span><strong>{pendingShift.turno.horasTranscurridas ?? '—'} h</strong></div>
           </div>
 
-          <p className="asistencia-note">Seguridad no captura una hora manual. Elige según lo que está ocurriendo en este momento.</p>
+          <p className="asistencia-note">Los Eventuales con turno vencido van a revision de RH con respaldo. No se registra una salida actual ni se pagan automaticamente las horas acumuladas.</p>
 
           <div className="asistencia-pending-actions">
-            {pendingShift.turno.propiedadId === propiedad.id && (
+            {pendingShift.empleado.tipo !== 'eventual' && pendingShift.turno.propiedadId === propiedad.id && (
               <button type="button" className="asistencia-primary" disabled={busy} onClick={prepararSalidaPendiente}>
                 <LogOut size={18} /> Registrar salida ahora
               </button>
             )}
             <button type="button" className="secondary-button" disabled={busy} onClick={marcarSinSalidaYNuevaEntrada}>
-              <LogIn size={18} /> No checó salida e iniciar nuevo turno
+              <LogIn size={18} /> {pendingShift.empleado.tipo === 'eventual' ? 'Enviar a revision y preparar nueva entrada' : 'No checo salida e iniciar nuevo turno'}
             </button>
             <button type="button" className="secondary-button" disabled={busy} onClick={() => setPendingShift(null)}>
               Cancelar
@@ -1110,6 +1133,14 @@ export default function RegistroAsistencia({
             <p>
               {draft.empleado.clave}
             </p>
+            {draft.empleado.fotoRostro && <div className="asistencia-foto-identidad">
+              <img src={draft.empleado.fotoRostro} alt="Fotografía de registro del eventual" />
+              <strong>Compara esta foto con la persona antes de registrar.</strong>
+            </div>}
+            {draft.empleado.requiereCotejoVisual && <label className="asistencia-cotejo-checkbox">
+              <input type="checkbox" checked={cotejoFotoConfirmado} onChange={(event) => setCotejoFotoConfirmado(event.target.checked)} />
+              Confirmo que la fotografía coincide con la persona que se presenta.
+            </label>}
           </div>
 
           <div
@@ -1128,6 +1159,14 @@ export default function RegistroAsistencia({
             </strong>
           </div>
 
+          {draft.tipo === 'entrada' && draft.empleado.tipo === 'eventual' && <div className="asistencia-entry-reference">
+            {draft.programacionesDisponibles?.length ? <label>Turno y puesto de esta jornada
+              <select className="text-input" value={draft.programacionId || ''} onChange={e=>persist({...draft,programacionId:e.target.value})} disabled={busy}>
+                <option value="">Selecciona el turno programado</option>
+                {draft.programacionesDisponibles.map(a=><option key={a.id} value={a.id}>{a.fecha} {a.horaInicio}-{a.horaFin} - {a.puestoNombre}</option>)}
+              </select><small>Se aplicara la tarifa guardada del puesto asignado. El puesto habitual no cambia.</small>
+            </label> : <p>Sin asignacion aplicable: se usa el puesto habitual {draft.empleado.puestoNombre || ''}. RH puede corregirlo con documento de respaldo.</p>}
+          </div>}
           {draft.entradaEn &&
             draft.tipo === 'salida' && (
               <div className="asistencia-entry-reference">
@@ -1214,6 +1253,7 @@ export default function RegistroAsistencia({
               onClick={confirmar}
               disabled={
                 busy ||
+                (draft.empleado.requiereCotejoVisual && !cotejoFotoConfirmado) ||
                 (draft.requiereFoto &&
                   !draft.foto &&
                   !draft.fotoPath)

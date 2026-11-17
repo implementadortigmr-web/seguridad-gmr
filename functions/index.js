@@ -1,3 +1,4 @@
+import { tiempoMs, fechaHoraEnZona, fechaHoraLocalAMs, intervaloPlaneado, seTraslapan, candidatosDeEntrada, tarifaPlanificada, MAX_RESPALDO_BYTES } from './operacionEventuales.js';
 import { initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
@@ -178,10 +179,11 @@ async function revisarJornadaVencida({ empleadoId, jornadaId, tipoPersonal, limi
       return { accion: 'cerrada_sin_salida', horas, limite, jornada: { ...jornada, estado: 'sin_salida' } };
     }
 
-    if (jornada.estado !== 'salida_pendiente') {
+    if (jornada.estado !== 'salida_pendiente' || (tipoPersonal === 'eventual' && jornada.requiereRevision !== true)) {
       tx.update(jornadaRef, {
         estado: 'salida_pendiente',
-        salidaPendienteDesde: now,
+        salidaPendienteDesde: jornada.salidaPendienteDesde || now,
+        ...(tipoPersonal === 'eventual' ? {requiereRevision: true,limiteRevisionHoras:limite} : {}),
         actualizadoEn: now,
       });
     }
@@ -219,6 +221,31 @@ function endpoint(fn) {
       throw new HttpsError('internal', `No se pudo completar la operacion. Referencia: ${referencia}. Consulta los registros de Cloud Functions.`, { referencia });
     }
   });
+}
+
+function publicEndpoint(fn) {
+  return onCall({ ...options, cors: true, invoker: 'public' }, async (req) => {
+    try { return await fn(req); }
+    catch (error) {
+      if (error instanceof HttpsError) throw error;
+      const referencia = hash(`${Date.now()}:${Math.random()}`).slice(0, 12);
+      console.error('PublicFormError', { referencia, codigo: String(error?.code || ''), nombre: String(error?.name || 'Error') });
+      throw new HttpsError('internal', `No se pudo completar la operacion. Referencia: ${referencia}.`, { referencia });
+    }
+  });
+}
+
+function textoLimitado(value, max, required = false, label = 'Dato') {
+  const text = String(value ?? '').trim();
+  if ((required && !text) || text.length > max) fail('invalid-argument', `${label} no es valido.`);
+  return text;
+}
+
+function datosExtraEventual(data = {}) {
+  return {
+    grupoNombre: textoLimitado(data.grupoNombre, 120, false, 'Grupo'),
+    encargadoNombre: textoLimitado(data.encargadoNombre, 160, false, 'Encargado'),
+  };
 }
 
 async function perfil(uid) {
@@ -441,8 +468,8 @@ export const seguridadGuardarUsuarioSistema = endpoint(async (req) => {
   if (['guardia', 'asistencia'].includes(access.rol) && !isEmail && !/^[A-Z0-9_-]{3,32}$/.test(shortUser)) {
     fail('invalid-argument', 'Usuario corto: 3 a 32 letras, numeros, guiones o guion bajo.');
   }
-  if (['administrador', 'supervisor', 'rh', 'nominas'].includes(access.rol) && !isEmail) {
-    fail('invalid-argument', 'Administrador, supervisor, RH y Nóminas deben usar un correo válido.');
+  if (['administrador', 'supervisor', 'rh', 'solicitante', 'nominas'].includes(access.rol) && !isEmail) {
+    fail('invalid-argument', 'Administrador, supervisor, RH, solicitantes y Nóminas deben usar un correo válido.');
   }
   const email = isEmail ? acceso.trim().toLowerCase() : `${shortUser.toLowerCase()}@seguridadgmr.local`;
   let account;
@@ -710,6 +737,7 @@ function jornadaParaSeguimiento(docSnap, timeZone) {
     id: docSnap.id,
     empleadoId: row.empleadoId || '',
     empleadoNombre: row.empleadoNombre || '',
+    programacionId: row.programacionId || '',
     puestoId: row.puestoId || '',
     puestoNombre: row.puestoNombre || '',
     fechaJornada: row.fechaJornada || entrada?.fecha || '',
@@ -770,8 +798,8 @@ async function construirSeguimientoPlaneacion(propiedadId, semanaInicio, zonaHor
     db.collection('asistenciaJornadas')
       .where('propiedadId', '==', propiedadId)
       .where('tipoPersonal', '==', 'eventual')
-      .where('fechaJornada', '>=', semanaInicio)
-      .where('fechaJornada', '<=', semanaFin)
+      .where('fechaJornada', '>=', sumarDiasIso(semanaInicio,-1))
+      .where('fechaJornada', '<=', sumarDiasIso(semanaFin,1))
       .orderBy('fechaJornada', 'desc')
       .get(),
   ]);
@@ -805,8 +833,11 @@ async function construirSeguimientoPlaneacion(propiedadId, semanaInicio, zonaHor
     const candidates = (jornadasPorEmpleado.get(asignacion.empleadoId) || [])
       .filter((jornada) => !usadas.has(jornada.id)
         && !jornadasReservadasComoReemplazo.has(jornada.id)
-        && jornada.fechaJornada === asignacion.fecha)
+        && (jornada.programacionId === asignacion.id || asignacion.jornadaId === jornada.id || (!jornada.programacionId && !asignacion.jornadaId && jornada.fechaJornada === asignacion.fecha)))
       .sort((a, b) => {
+        const exactA=a.programacionId===asignacion.id || a.id===asignacion.jornadaId;
+        const exactB=b.programacionId===asignacion.id || b.id===asignacion.jornadaId;
+        if(exactA!==exactB)return exactA?-1:1;
         const da = a.entradaIndice === null || inicioIndice === null ? Number.MAX_SAFE_INTEGER : Math.abs(a.entradaIndice - inicioIndice);
         const dbb = b.entradaIndice === null || inicioIndice === null ? Number.MAX_SAFE_INTEGER : Math.abs(b.entradaIndice - inicioIndice);
         return da - dbb;
@@ -858,7 +889,7 @@ async function construirSeguimientoPlaneacion(propiedadId, semanaInicio, zonaHor
   });
 
   const sinProgramacion = jornadas
-    .filter((jornada) => !usadas.has(jornada.id))
+    .filter((jornada) => !usadas.has(jornada.id) && !jornada.programacionId && jornada.fechaJornada >= semanaInicio && jornada.fechaJornada <= semanaFin)
     .sort((a, b) => `${a.fechaJornada}${a.entradaHora}${a.empleadoNombre}`
       .localeCompare(`${b.fechaJornada}${b.entradaHora}${b.empleadoNombre}`, 'es'));
 
@@ -1072,217 +1103,99 @@ export const planeacionQuitarReemplazo = endpoint(async (req) => {
   return { ok: true, asignacionId };
 });
 
-export const planeacionGuardarNecesidad = endpoint(async (req) => {
-  const actor = await actorConPermiso(
-    req.auth.uid,
-    PERMISOS.PLANEACION_PERSONAL,
-    'Esta cuenta no puede modificar la planeación de personal.'
-  );
-  const {
-    necesidadId = '',
-    propiedadId = '',
-    fecha = '',
-    horarioId = '',
-    puestoId = '',
-    cantidadNecesaria,
-    observaciones = '',
-  } = req.data || {};
-
-  if (
-    !idValido(propiedadId)
-    || !fechaIsoValida(fecha)
-    || !idValido(horarioId)
-    || !idValido(puestoId)
-    || !Number.isInteger(Number(cantidadNecesaria))
-    || Number(cantidadNecesaria) < 1
-    || Number(cantidadNecesaria) > 100
-    || typeof observaciones !== 'string'
-    || observaciones.length > 500
-  ) {
-    fail('invalid-argument', 'Revisa fecha, horario, puesto y cantidad necesaria.');
-  }
-
-  const propertySnap = await autorizarPropiedad(actor, propiedadId);
-  const [horarioSnap, puestoSnap] = await Promise.all([
-    db.doc(`horarios/${horarioId}`).get(),
-    db.doc(`puestos/${puestoId}`).get(),
-  ]);
-  if (!horarioSnap.exists || horarioSnap.data()?.activo === false) fail('failed-precondition', 'El horario no existe o está inactivo.');
-  if (!puestoSnap.exists || puestoSnap.data()?.activo === false) fail('failed-precondition', 'El puesto no existe o está inactivo.');
-
-  const horario = horarioSnap.data();
-  const puesto = puestoSnap.data();
-  const generatedId = `nec_${hash(`${propiedadId}\0${fecha}\0${horarioId}\0${puestoId}`)}`;
-  if (!idValido(generatedId) || (necesidadId && !idValido(necesidadId))) {
-    fail('invalid-argument', 'Necesidad inválida.');
-  }
-
-  const sourceRef = necesidadId ? db.doc(`necesidadesPersonal/${necesidadId}`) : null;
-  const sourceSnap = sourceRef ? await sourceRef.get() : null;
-  if (necesidadId && !sourceSnap?.exists) fail('not-found', 'La necesidad ya no existe.');
-  if (sourceSnap?.exists && sourceSnap.data()?.propiedadId !== propiedadId) {
-    fail('failed-precondition', 'La necesidad pertenece a otra propiedad.');
-  }
-  if (necesidadId && necesidadId !== generatedId) {
-    const assignments = await db.collection('programacionPersonal').where('necesidadId', '==', necesidadId).limit(1).get();
-    if (!assignments.empty) {
-      fail('failed-precondition', 'Quita las personas asignadas antes de cambiar fecha, horario o puesto.');
+export const planeacionGuardarNecesidad = endpoint(async req => {
+  const actor=await actorConPermiso(req.auth.uid,PERMISOS.PLANEACION_PERSONAL);
+  const {necesidadId='',propiedadId='',fecha='',horarioId='',puestoId='',cantidadNecesaria,observaciones=''}=req.data || {};
+  if(![propiedadId,horarioId,puestoId].every(idValido)||!fechaIsoValida(fecha)||(necesidadId&&!idValido(necesidadId))||!Number.isInteger(Number(cantidadNecesaria))||Number(cantidadNecesaria)<1||Number(cantidadNecesaria)>100||typeof observaciones!=='string'||observaciones.length>500)fail('invalid-argument','Revisa fecha, horario, puesto y cantidad necesaria.');
+  const generatedId=`nec_${hash(`${propiedadId}\0${fecha}\0${horarioId}\0${puestoId}`)}`;
+  const targetRef=db.doc(`necesidadesPersonal/${generatedId}`),sourceRef=db.doc(`necesidadesPersonal/${necesidadId || generatedId}`);
+  return db.runTransaction(async tx=>{
+    const [fresh,property,hs,js,source,target,assignments]=await Promise.all([tx.get(db.doc(`usuarios/${actor.id}`)),tx.get(db.doc(`propiedades/${propiedadId}`)),tx.get(db.doc(`horarios/${horarioId}`)),tx.get(db.doc(`puestos/${puestoId}`)),tx.get(sourceRef),tx.get(targetRef),tx.get(db.collection('programacionPersonal').where('necesidadId','==',necesidadId || generatedId))]);
+    if(!tienePermiso(fresh.data(),PERMISOS.PLANEACION_PERSONAL)||!puedeVerPropiedad(fresh.data(),propiedadId))fail('permission-denied','No tienes permiso en esta propiedad.');
+    if(!property.exists||property.data().activo!==true||!hs.exists||hs.data().activo===false||!js.exists||js.data().activo===false)fail('failed-precondition','Revisa propiedad, horario y puesto activos.');
+    if(necesidadId&&!source.exists)fail('not-found','La necesidad ya no existe.');
+    if(source.exists&&source.data().propiedadId!==propiedadId)fail('failed-precondition','La necesidad pertenece a otra propiedad.');
+    const active=assignments.docs.filter(d=>d.data().activo!==false),cantidad=Number(cantidadNecesaria);
+    if(necesidadId&&necesidadId!==generatedId){
+      if(active.length)fail('failed-precondition','Quita las personas asignadas antes de cambiar fecha, horario o puesto. Si tienen jornadas vinculadas, conserva la necesidad original.');
+      if(target.exists&&target.data().activo!==false)fail('already-exists','Ya existe una necesidad con ese dia, horario y puesto.');
     }
-    const collision = await db.doc(`necesidadesPersonal/${generatedId}`).get();
-    if (collision.exists && collision.data()?.activo !== false) {
-      fail('already-exists', 'Ya existe una necesidad con ese día, horario y puesto.');
-    }
-  }
-
-  const cantidad = Number(cantidadNecesaria);
-  if (necesidadId && necesidadId === generatedId) {
-    const assignments = await db.collection('programacionPersonal').where('necesidadId', '==', necesidadId).get();
-    if (assignments.size > cantidad) {
-      fail('failed-precondition', `Ya hay ${assignments.size} personas asignadas. Quita asignaciones antes de reducir la cantidad.`);
-    }
-  }
-
-  const now = Timestamp.now();
-  const minutos = Number(horario.minutosDuracion || datosDuracionHorario(horario.horaInicio, horario.horaFin).minutosDuracion);
-  const tarifa = Number(puesto.tarifaHora || 0);
-  const costoEstimado = Math.round(((minutos / 60) * tarifa * cantidad) * 100) / 100;
-
-  // If an edited record changes day, schedule or job, retire the old identity and create the new one.
-  if (sourceRef && necesidadId !== generatedId) {
-    await sourceRef.set({ activo: false, actualizadoEn: now, actualizadoPor: actor.id }, { merge: true });
-  }
-
-  const targetRef = db.doc(`necesidadesPersonal/${generatedId}`);
-  const targetOld = await targetRef.get();
-  await targetRef.set({
-    propiedadId,
-    propiedadNombre: propertySnap.nombre || propiedadId,
-    fecha,
-    horarioId,
-    horarioNombre: horario.nombre || '',
-    horaInicio: horario.horaInicio,
-    horaFin: horario.horaFin,
-    minutosDuracion: minutos,
-    cruzaDia: horario.cruzaDia === true,
-    puestoId,
-    puestoNombre: puesto.nombre || '',
-    tarifaHora: tarifa,
-    cantidadNecesaria: cantidad,
-    costoEstimado,
-    observaciones: observaciones.trim(),
-    activo: true,
-    actualizadoEn: now,
-    actualizadoPor: actor.id,
-    ...(targetOld.exists ? {} : { creadoEn: now, creadoPor: actor.id }),
-  }, { merge: true });
-
-  return { necesidadId: targetRef.id };
-});
-
-export const planeacionEliminarNecesidad = endpoint(async (req) => {
-  const actor = await actorConPermiso(
-    req.auth.uid,
-    PERMISOS.PLANEACION_PERSONAL,
-    'Esta cuenta no puede modificar la planeación de personal.'
-  );
-  const necesidadId = String(req.data?.necesidadId || '').trim();
-  if (!idValido(necesidadId)) fail('invalid-argument', 'Necesidad inválida.');
-  const ref = db.doc(`necesidadesPersonal/${necesidadId}`);
-  const snap = await ref.get();
-  if (!snap.exists) return { ok: true };
-  await autorizarPropiedad(actor, snap.data().propiedadId);
-
-  const assignments = await db.collection('programacionPersonal').where('necesidadId', '==', necesidadId).get();
-  const batch = db.batch();
-  batch.set(ref, { activo: false, actualizadoEn: Timestamp.now(), actualizadoPor: actor.id }, { merge: true });
-  assignments.docs.forEach((docSnap) => batch.delete(docSnap.ref));
-  await batch.commit();
-  return { ok: true };
-});
-
-export const planeacionAsignarEventual = endpoint(async (req) => {
-  const actor = await actorConPermiso(
-    req.auth.uid,
-    PERMISOS.PLANEACION_PERSONAL,
-    'Esta cuenta no puede asignar Eventuales.'
-  );
-  const necesidadId = String(req.data?.necesidadId || '').trim();
-  const empleadoId = String(req.data?.empleadoId || '').trim();
-  if (!idValido(necesidadId) || !idValido(empleadoId)) fail('invalid-argument', 'Necesidad o empleado inválido.');
-
-  const [needSnap, personSnap] = await Promise.all([
-    db.doc(`necesidadesPersonal/${necesidadId}`).get(),
-    db.doc(`asistenciaPersonal/${empleadoId}`).get(),
-  ]);
-  if (!needSnap.exists || needSnap.data()?.activo === false) fail('not-found', 'La necesidad ya no está disponible.');
-  if (!personSnap.exists || personSnap.data()?.activo === false || personSnap.data()?.tipo !== 'eventual') {
-    fail('failed-precondition', 'El Eventual no existe o está inactivo.');
-  }
-
-  const need = needSnap.data();
-  const person = personSnap.data();
-  await autorizarPropiedad(actor, need.propiedadId);
-  const props = Array.isArray(person.propiedadesPermitidas) && person.propiedadesPermitidas.length
-    ? person.propiedadesPermitidas
-    : person.propiedadId ? [person.propiedadId] : [];
-  if (!props.includes(need.propiedadId)) fail('failed-precondition', 'El Eventual no está asignado a esta propiedad.');
-  if (!person.puestoId || person.puestoId !== need.puestoId) fail('failed-precondition', 'El Eventual debe tener el mismo puesto de la necesidad.');
-
-  const assignmentId = `asg_${hash(`${necesidadId}\0${empleadoId}`)}`;
-  const assignmentRef = db.doc(`programacionPersonal/${assignmentId}`);
-  const existing = await assignmentRef.get();
-  if (existing.exists) return { asignacionId: assignmentId, yaExistia: true };
-
-  const currentAssignments = await db.collection('programacionPersonal').where('necesidadId', '==', necesidadId).get();
-  if (currentAssignments.size >= Number(need.cantidadNecesaria || 0)) {
-    fail('failed-precondition', 'La necesidad ya tiene todas las personas requeridas.');
-  }
-
-  const now = Timestamp.now();
-  await assignmentRef.set({
-    necesidadId,
-    propiedadId: need.propiedadId,
-    propiedadNombre: need.propiedadNombre || '',
-    fecha: need.fecha,
-    horarioId: need.horarioId,
-    horarioNombre: need.horarioNombre || '',
-    horaInicio: need.horaInicio,
-    horaFin: need.horaFin,
-    puestoId: need.puestoId,
-    puestoNombre: need.puestoNombre || '',
-    empleadoId,
-    empleadoNombre: person.nombre || '',
-    tarifaHoraPlanificada: person.tarifaPersonalizada !== null && person.tarifaPersonalizada !== ''
-      && Number.isFinite(Number(person.tarifaPersonalizada)) && Number(person.tarifaPersonalizada) >= 0
-      ? Number(person.tarifaPersonalizada)
-      : Number(need.tarifaHora || 0),
-    costoEstimado: Math.round(((Number(need.minutosDuracion || 0) / 60)
-      * (person.tarifaPersonalizada !== null && person.tarifaPersonalizada !== ''
-        && Number.isFinite(Number(person.tarifaPersonalizada)) && Number(person.tarifaPersonalizada) >= 0
-        ? Number(person.tarifaPersonalizada)
-        : Number(need.tarifaHora || 0))) * 100) / 100,
-    estado: 'programado',
-    activo: true,
-    asignadoEn: now,
-    asignadoPor: actor.id,
+    if(active.length>cantidad)fail('failed-precondition',`Ya hay ${active.length} personas asignadas. No puedes reducir la cantidad por debajo de ese total.`);
+    const h=hs.data(),j=js.data(),old=source.data() || {},snapshot=active.length>0&&source.exists&&(!necesidadId||necesidadId===generatedId);
+    const times=snapshot?{horaInicio:old.horaInicio,horaFin:old.horaFin,minutosDuracion:old.minutosDuracion,cruzaDia:old.cruzaDia===true}:{horaInicio:h.horaInicio,horaFin:h.horaFin,...datosDuracionHorario(h.horaInicio,h.horaFin)};
+    const tarifa=Number(snapshot?old.tarifaHora:j.tarifaHora),now=Timestamp.now();
+    if(!Number.isFinite(tarifa)||tarifa<0)fail('failed-precondition','Tarifa no valida en el puesto.');
+    if(necesidadId&&necesidadId!==generatedId)tx.set(sourceRef,{activo:false,actualizadoEn:now,actualizadoPor:actor.id},{merge:true});
+    tx.set(targetRef,{propiedadId,propiedadNombre:property.data().nombre || '',fecha,horarioId,horarioNombre:snapshot?(old.horarioNombre || ''):(h.nombre || ''),...times,puestoId,puestoNombre:snapshot?(old.puestoNombre || ''):(j.nombre || ''),tarifaHora:tarifa,cantidadNecesaria:cantidad,costoEstimado:Math.round(Number(times.minutosDuracion)/60*tarifa*cantidad*100)/100,observaciones:observaciones.trim(),activo:true,actualizadoEn:now,actualizadoPor:actor.id,...(!target.exists?{creadoEn:now,creadoPor:actor.id}:{})},{merge:true});
+    return {necesidadId:generatedId};
   });
-  return { asignacionId: assignmentId };
 });
 
-export const planeacionQuitarAsignacion = endpoint(async (req) => {
-  const actor = await actorConPermiso(
-    req.auth.uid,
-    PERMISOS.PLANEACION_PERSONAL,
-    'Esta cuenta no puede modificar asignaciones.'
-  );
-  const asignacionId = String(req.data?.asignacionId || '').trim();
-  if (!idValido(asignacionId)) fail('invalid-argument', 'Asignación inválida.');
-  const ref = db.doc(`programacionPersonal/${asignacionId}`);
-  const snap = await ref.get();
-  if (!snap.exists) return { ok: true };
-  await autorizarPropiedad(actor, snap.data().propiedadId);
-  await ref.delete();
-  return { ok: true };
+export const planeacionEliminarNecesidad = endpoint(async req => {
+  const actor=await actorConPermiso(req.auth.uid,PERMISOS.PLANEACION_PERSONAL);
+  const id=String(req.data?.necesidadId || '').trim();
+  if(!idValido(id))fail('invalid-argument','Necesidad invalida.');
+  const ref=db.doc(`necesidadesPersonal/${id}`);
+  return db.runTransaction(async tx=>{
+    const [ns,fresh,assigns]=await Promise.all([tx.get(ref),tx.get(db.doc(`usuarios/${actor.id}`)),tx.get(db.collection('programacionPersonal').where('necesidadId','==',id))]);
+    if(!ns.exists)return {ok:true};
+    if(!tienePermiso(fresh.data(),PERMISOS.PLANEACION_PERSONAL)||!puedeVerPropiedad(fresh.data(),ns.data().propiedadId))fail('permission-denied','No tienes permiso en esta propiedad.');
+    if(assigns.docs.some(d=>d.data().jornadaId||d.data().reemplazoJornadaId))fail('failed-precondition','Esta necesidad tiene jornadas o reemplazos vinculados. Conserva el historial; corrige la jornada con respaldo.');
+    const now=Timestamp.now();
+    tx.set(ref,{activo:false,actualizadoEn:now,actualizadoPor:actor.id},{merge:true});
+    assigns.docs.forEach(d=>tx.delete(d.ref));
+    return {ok:true};
+  });
+});
+
+export const planeacionAsignarEventual = endpoint(async req => {
+  const actor=await actorConPermiso(req.auth.uid,PERMISOS.PLANEACION_PERSONAL);
+  const {necesidadId,empleadoId}=req.data || {};
+  if(![necesidadId,empleadoId].every(idValido)) fail('invalid-argument','Necesidad o empleado invalido.');
+  return db.runTransaction(async tx=>{
+    const needRef=db.doc(`necesidadesPersonal/${necesidadId}`),lock=db.doc(`planeacionBloqueos/${empleadoId}`);
+    const assignmentId=`asg_${hash(`${necesidadId}\0${empleadoId}`)}`,ref=db.doc(`programacionPersonal/${assignmentId}`);
+    const [ns,ps,existing,fresh]=await Promise.all([tx.get(needRef),tx.get(db.doc(`asistenciaPersonal/${empleadoId}`)),tx.get(ref),tx.get(db.doc(`usuarios/${actor.id}`)),tx.get(lock)]);
+    if(!ns.exists || ns.data().activo===false) fail('not-found','Necesidad no disponible.');
+    const n=ns.data(),person=ps.data();
+    if(!tienePermiso(fresh.data(),PERMISOS.PLANEACION_PERSONAL) || !puedeVerPropiedad(fresh.data(),n.propiedadId)) fail('permission-denied','No tienes permiso en esta propiedad.');
+    if(!ps.exists || person.activo!==true || person.tipo!=='eventual' || !personalPuedeOperarEnPropiedad(person,n.propiedadId)) fail('failed-precondition','Eventual no disponible en esta propiedad.');
+    if(existing.exists) return {asignacionId:assignmentId,yaExistia:true};
+    const [current,other]=await Promise.all([
+      tx.get(db.collection('programacionPersonal').where('necesidadId','==',necesidadId)),
+      tx.get(db.collection('programacionPersonal').where('empleadoId','==',empleadoId).where('fecha','>=',sumarDiasIso(n.fecha,-1)).where('fecha','<=',sumarDiasIso(n.fecha,1)))
+    ]);
+    if(current.docs.filter(d=>d.data().activo!==false).length>=Number(n.cantidadNecesaria)) fail('failed-precondition','La necesidad ya esta completa.');
+    const target=intervaloPlaneado(n);
+    if(!target) fail('failed-precondition','Revisa el horario de la necesidad.');
+    for(const doc of other.docs) {
+      const o=doc.data(),it=intervaloPlaneado(o);
+      if(o.activo!==false && it && seTraslapan(target,it)) fail('failed-precondition','La persona ya esta asignada en ese horario, incluso en otra propiedad.');
+    }
+    const now=Timestamp.now(),tarifa=Number(n.tarifaHora || 0);
+    tx.create(ref,{necesidadId,propiedadId:n.propiedadId,propiedadNombre:n.propiedadNombre || '',fecha:n.fecha,horarioId:n.horarioId,horarioNombre:n.horarioNombre || '',horaInicio:n.horaInicio,horaFin:n.horaFin,minutosDuracion:n.minutosDuracion,cruzaDia:n.cruzaDia===true,puestoId:n.puestoId,puestoNombre:n.puestoNombre || '',puestoHabitualId:person.puestoId || '',puestoHabitualNombre:person.puestoNombre || '',empleadoId,empleadoNombre:person.nombre || '',tarifaHoraPlanificada:tarifa,versionTarifa:2,origenTarifa:'puesto_asignado',costoEstimado:Math.round(Number(n.minutosDuracion)/60*tarifa*100)/100,estado:'programado',activo:true,asignadoEn:now,asignadoPor:actor.id});
+    tx.set(lock,{actualizadoEn:now},{merge:true});
+    tx.set(needRef,{asignacionesActualizadasEn:now},{merge:true});
+    return {asignacionId:assignmentId};
+  });
+});
+
+export const planeacionQuitarAsignacion = endpoint(async req => {
+  const actor=await actorConPermiso(req.auth.uid,PERMISOS.PLANEACION_PERSONAL);
+  const id=String(req.data?.asignacionId || '').trim();
+  if(!idValido(id))fail('invalid-argument','Asignacion invalida.');
+  const ref=db.doc(`programacionPersonal/${id}`);
+  return db.runTransaction(async tx=>{
+    const [snap,fresh]=await Promise.all([tx.get(ref),tx.get(db.doc(`usuarios/${actor.id}`))]);
+    if(!snap.exists)return {ok:true};
+    const a=snap.data();
+    if(!tienePermiso(fresh.data(),PERMISOS.PLANEACION_PERSONAL)||!puedeVerPropiedad(fresh.data(),a.propiedadId))fail('permission-denied','No tienes permiso en esta propiedad.');
+    if(a.jornadaId||a.reemplazoJornadaId)fail('failed-precondition','La asignacion ya tiene una jornada o reemplazo vinculado y debe conservarse.');
+    const needRef=db.doc(`necesidadesPersonal/${a.necesidadId}`);
+    await tx.get(needRef);
+    tx.delete(ref);tx.set(needRef,{asignacionesActualizadasEn:Timestamp.now()},{merge:true});
+    return {ok:true};
+  });
 });
 
 async function copiarNecesidades({ actor, propiedadId, origenInicio, origenFin, destinoInicio }) {
@@ -1397,6 +1310,288 @@ export const asistenciaGuardarPerfilUsuario = endpoint(async (req) => {
       nuevo: { rol: access.rol, propiedadesPermitidas: permisos, modulosPermitidos: access.modulosPermitidos } });
   });
   return { ok: true, uid };
+});
+
+
+// Registros publicos de Eventuales: la propiedad se define al APROBAR, nunca por el solicitante.
+// Mexico (checador especial) no es una propiedad operativa para Eventuales.
+async function propiedadesOperativasEventuales() {
+  const [propSnap, mexicoSnap] = await Promise.all([
+    db.collection('propiedades').where('activo', '==', true).get(),
+    db.doc('configuracionAsistencia/mexico').get(),
+  ]);
+  const mexicoId = mexicoSnap.data()?.propiedadId || '';
+  return propSnap.docs
+    .filter((doc) => {
+      const d = doc.data() || {};
+      const nombre = normalizarClave(`${d.codigo || ''}_${d.nombre || ''}`);
+      return doc.id !== mexicoId && !nombre.includes('MEXICO');
+    })
+    .map((doc) => ({ id: doc.id, nombre: doc.data()?.nombre || doc.id }))
+    .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+}
+
+export const eventualFormularioCatalogoPublico = publicEndpoint(async () => {
+  const puestosSnap = await db.collection('puestos').where('activo', '==', true).get();
+  return {
+    puestos: puestosSnap.docs
+      .map((doc) => ({ id: doc.id, nombre: doc.data()?.nombre || doc.id }))
+      .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es')),
+  };
+});
+
+// El alta publica queda activa al instante, pero se guarda su foto en Storage PRIVADO.
+// La foto no es prueba de identidad: el operador debe cotejarla al registrar asistencia.
+function normalizarNombreEventual(nombre) {
+  return normalizarClave(nombre).replace(/\s+/g, ' ').trim();
+}
+
+function extraerRostroEventual(valor) {
+  if (typeof valor !== 'string' || !/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(valor) || valor.length > 400000) {
+    fail('invalid-argument', 'Adjunta una fotografia de rostro en formato JPG (maximo 250 KB).');
+  }
+  const data = Buffer.from(valor.split(',')[1], 'base64');
+  if (data.length < 2500 || data.length > 250 * 1024 || data[0] !== 0xff || data[1] !== 0xd8 || data.at(-2) !== 0xff || data.at(-1) !== 0xd9) {
+    fail('invalid-argument', 'Fotografia invalida. Vuelve a tomarla.');
+  }
+  return data;
+}
+
+async function fotoEventualComoDataUrl(path) {
+  if (!path || !/^eventuales\/rostros\/[a-zA-Z0-9_-]+\.jpg$/.test(path)) return '';
+  try {
+    const [data] = await getStorage().bucket().file(path).download();
+    if (data.length > 250 * 1024) return '';
+    return `data:image/jpeg;base64,${data.toString('base64')}`;
+  } catch (err) {
+    console.error('FotoEventualNoDisponible', { codigo: String(err?.code || '') });
+    return '';
+  }
+}
+
+export const eventualRegistrarSolicitudPublica = publicEndpoint(async (req) => {
+  const nombre = textoLimitado(req.data?.nombre, 160, true, 'Nombre').replace(/\s+/g, ' ').toLocaleUpperCase('es-MX');
+  const telefono = textoLimitado(req.data?.telefono, 40, true, 'Telefono');
+  const puestoId = textoLimitado(req.data?.puestoId, 128, true, 'Puesto');
+  const encargadoNombre = textoLimitado(req.data?.encargadoNombre, 160, false, 'Encargado');
+  const foto = extraerRostroEventual(req.data?.fotoRostro);
+  const nombreNormalizado = normalizarNombreEventual(nombre);
+  if (nombreNormalizado.length < 7 || nombreNormalizado.split(' ').length < 2) {
+    fail('invalid-argument', 'Captura nombre y apellidos completos.');
+  }
+  if (!/^[0-9 +()\-]{10,20}$/.test(telefono) || telefono.replace(/\D/g, '').length < 10) {
+    fail('invalid-argument', 'Captura un telefono valido de al menos 10 digitos.');
+  }
+  if (!idValido(puestoId)) fail('invalid-argument', 'Puesto no valido.');
+  if (req.data?.aceptaRegistro !== true) fail('failed-precondition', 'Debes autorizar el uso de tus datos para registrarte.');
+
+  const [puestoSnap, operativas, mismaPersona, mismoTelefono, nombreExacto] = await Promise.all([
+    db.doc(`puestos/${puestoId}`).get(), propiedadesOperativasEventuales(),
+    db.doc(`asistenciaNombresEventuales/${hash(nombreNormalizado)}`).get(),
+    db.collection('asistenciaPersonal').where('telefono', '==', telefono).limit(30).get(),
+    db.collection('asistenciaPersonal').where('nombre', '==', nombre).limit(10).get(),
+  ]);
+  if (!puestoSnap.exists || puestoSnap.data()?.activo !== true) fail('failed-precondition', 'El puesto ya no esta disponible.');
+  if (!operativas.length || operativas.length > 100) fail('failed-precondition', 'No hay propiedades operativas disponibles.');
+  if (mismaPersona.exists || nombreExacto.docs.some((d) => d.data()?.tipo === 'eventual' && d.data()?.activo !== false) ||
+    mismoTelefono.docs.some((d) => d.data()?.tipo === 'eventual' && normalizarNombreEventual(d.data()?.nombre || '') === nombreNormalizado)) {
+    fail('already-exists', 'Este nombre ya esta registrado. Consulta con RH para recuperar tu QR; no hagas otro registro.');
+  }
+
+  const fecha = new Date().toISOString().slice(0, 10);
+  const ip = String(req.rawRequest?.ip || req.rawRequest?.headers?.['x-forwarded-for'] || 'origen-no-disponible').split(',')[0].trim();
+  const limitRef = db.doc(`asistenciaRegistroLimites/${hash(`${fecha}:${ip}`)}`);
+  const solicitudRef = db.collection('solicitudesEventuales').doc();
+  const personRef = db.collection('asistenciaPersonal').doc();
+  const nameRef = db.doc(`asistenciaNombresEventuales/${hash(nombreNormalizado)}`);
+  const clave = codigoPersonal('eventual');
+  const claveRef = db.doc(`asistenciaClaves/${clave}`);
+  const fotoRostroPath = `eventuales/rostros/${personRef.id}.jpg`;
+  const consultaToken = randomBytes(18).toString('hex');
+  const now = Timestamp.now();
+  const ids = operativas.map((p) => p.id);
+  const folio = `EVREG-${new Date().getUTCFullYear()}-${solicitudRef.id.slice(0, 6).toUpperCase()}`;
+  const fields = validarPersonal({
+    nombre, telefono, tipo: 'eventual', clave, puestoId, activo: true,
+    propiedadesPermitidas: ids, area: '', tarifaPersonalizada: null,
+  });
+  // La subida se hace antes de la transaccion; si falla el alta, se limpia la foto.
+  const bucketFile = getStorage().bucket().file(fotoRostroPath);
+  await bucketFile.save(foto, { resumable: false, metadata: {
+    contentType: 'image/jpeg', cacheControl: 'private, no-store',
+  }});
+  try {
+    await db.runTransaction(async (tx) => {
+      const [nombreActual, limiteActual] = await Promise.all([tx.get(nameRef), tx.get(limitRef)]);
+      if (nombreActual.exists) fail('already-exists', 'Este nombre ya esta registrado. Consulta con RH.');
+      const actual = Number(limiteActual.data()?.conteo || 0);
+      if (actual >= 60) fail('resource-exhausted', 'Demasiados registros desde este dispositivo. Consulta a RH.');
+      tx.create(nameRef, { empleadoId: personRef.id, nombreNormalizado, creadoEn: now });
+      tx.set(limitRef, { fecha, conteo: actual + 1, actualizadoEn: now }, { merge: true });
+      tx.create(personRef, {
+        ...fields, propiedadId: ids[0], puestoNombre: puestoSnap.data()?.nombre || '',
+        tarifaBase: Number(puestoSnap.data()?.tarifaHora || 0),
+        encargadoNombre, grupoNombre: '', fotoRostroPath,
+        requiereCotejoVisual: true, origenRegistro: 'autorregistro_publico',
+        solicitudEventualId: solicitudRef.id, creadoEn: now, creadoPor: 'autorregistro_publico',
+        actualizadoEn: now, actualizadoPor: 'autorregistro_publico',
+      });
+      tx.create(claveRef, { empleadoId: personRef.id, clave, tipo: 'eventual', creadoEn: now, actualizadoEn: now });
+      tx.create(solicitudRef, {
+        folio, nombre, telefono, puestoId, puestoNombre: puestoSnap.data()?.nombre || '',
+        encargadoNombre, propiedadId: 'todas', propiedadNombre: 'Todas las propiedades',
+        alcancePropiedades: 'todas_operativas', fotoRostroPath,
+        consultaHash: hash(consultaToken), estado: 'aprobada', empleadoId: personRef.id,
+        clave, qr: clave, creadoEn: now, resueltaEn: now,
+        resueltaPor: 'autorregistro_publico', origen: 'autorregistro_publico',
+      });
+    });
+  } catch (err) {
+    await bucketFile.delete({ ignoreNotFound: true }).catch(() => {});
+    throw err;
+  }
+  return { solicitudId: solicitudRef.id, consultaToken, folio, estado: 'aprobada',
+    nombre, puestoNombre: puestoSnap.data()?.nombre || '', clave, qr: clave };
+});
+
+export const eventualConsultarSolicitudPublica = publicEndpoint(async (req) => {
+  const solicitudId = String(req.data?.solicitudId || '').trim();
+  const consultaToken = String(req.data?.consultaToken || '').trim();
+  if (!idValido(solicitudId) || !/^[a-f0-9]{36}$/.test(consultaToken)) fail('invalid-argument', 'Solicitud no valida.');
+  const snap = await db.doc(`solicitudesEventuales/${solicitudId}`).get();
+  if (!snap.exists || snap.data()?.consultaHash !== hash(consultaToken)) fail('not-found', 'Solicitud no encontrada.');
+  const d = snap.data();
+  const fotoRostro = d.estado === 'aprobada' ? await fotoEventualComoDataUrl(d.fotoRostroPath) : '';
+  return {
+    fotoRostro,
+    folio: d.folio || '',
+    estado: d.estado || 'pendiente',
+    nombre: d.nombre || '',
+    propiedadNombre: d.propiedadNombre || '',
+    puestoNombre: d.puestoNombre || '',
+    clave: d.estado === 'aprobada' ? (d.clave || '') : '',
+    qr: d.estado === 'aprobada' ? (d.qr || d.clave || '') : '',
+    motivoRechazo: d.estado === 'rechazada' ? (d.motivoRechazo || '') : '',
+  };
+});
+
+export const eventualConsultarFotoPersonal = endpoint(async (req) => {
+  const actor = await administradorOPersonal(req.auth.uid);
+  const empleadoId = String(req.data?.empleadoId || '').trim();
+  if (!idValido(empleadoId)) fail('invalid-argument', 'Persona no valida.');
+  const snap = await db.doc(`asistenciaPersonal/${empleadoId}`).get();
+  if (!snap.exists || snap.data()?.tipo !== 'eventual') fail('not-found', 'Eventual no encontrado.');
+  if (!(snap.data()?.propiedadesPermitidas || []).some((id) => puedeVerPropiedad(actor, id))) {
+    fail('permission-denied', 'No tienes acceso a este eventual.');
+  }
+  return { fotoRostro: await fotoEventualComoDataUrl(snap.data()?.fotoRostroPath) };
+});
+
+export const eventualListarSolicitudes = endpoint(async (req) => {
+  const actor = await administradorOPersonal(req.auth.uid);
+  const estado = String(req.data?.estado || 'pendiente').trim();
+  if (!['pendiente', 'aprobada', 'rechazada', 'todas'].includes(estado)) fail('invalid-argument', 'Estado no valido.');
+  let q = db.collection('solicitudesEventuales');
+  if (estado !== 'todas') q = q.where('estado', '==', estado);
+  const snap = await q.limit(250).get();
+  const necesitaTodas = snap.docs.some((doc) => doc.data()?.alcancePropiedades === 'todas_operativas');
+  const operativas = necesitaTodas ? await propiedadesOperativasEventuales() : [];
+  const puedeAprobarTodas = operativas.length > 0
+    && operativas.every((propiedad) => puedeVerPropiedad(actor, propiedad.id));
+  const rows = snap.docs
+    .map((doc) => ({ id: doc.id, ...doc.data(), consultaHash: undefined }))
+    .filter((item) => item.alcancePropiedades === 'todas_operativas'
+      ? puedeAprobarTodas
+      : item.propiedadId && puedeVerPropiedad(actor, item.propiedadId))
+    .sort((a, b) => (b.creadoEn?.toMillis?.() || 0) - (a.creadoEn?.toMillis?.() || 0));
+  return { rows };
+});
+
+export const eventualResolverSolicitud = endpoint(async (req) => {
+  const actor = await administradorOPersonal(req.auth.uid);
+  const solicitudId = String(req.data?.solicitudId || '').trim();
+  const accion = String(req.data?.accion || '').trim();
+  if (!idValido(solicitudId) || !['aprobar', 'rechazar'].includes(accion)) fail('invalid-argument', 'Solicitud o accion no valida.');
+  const ref = db.doc(`solicitudesEventuales/${solicitudId}`);
+  const snap = await ref.get();
+  if (!snap.exists) fail('not-found', 'La solicitud ya no existe.');
+  const solicitud = snap.data();
+  if (solicitud.estado !== 'pendiente') fail('failed-precondition', 'La solicitud ya fue atendida.');
+  const alcanceTodas = solicitud.alcancePropiedades === 'todas_operativas';
+  const operativas = alcanceTodas ? await propiedadesOperativasEventuales() : [];
+  const propiedadesAprobadas = alcanceTodas
+    ? operativas.map((item) => item.id)
+    : [solicitud.propiedadId];
+  if (!propiedadesAprobadas.length || propiedadesAprobadas.length > 100) {
+    fail('failed-precondition', 'No hay propiedades operativas validas para asignar.');
+  }
+  // Una cuenta limitada a un hotel NO debe poder otorgar acceso a todos.
+  for (const propiedadId of propiedadesAprobadas) {
+    await autorizarPropiedad(actor, propiedadId);
+  }
+
+  if (accion === 'rechazar') {
+    const motivoRechazo = textoLimitado(req.data?.motivoRechazo, 300, true, 'Motivo');
+    await ref.set({ estado: 'rechazada', motivoRechazo, resueltaEn: Timestamp.now(), resueltaPor: actor.id }, { merge: true });
+    return { ok: true, estado: 'rechazada' };
+  }
+
+  const [puestoSnap, samePhoneSnap] = await Promise.all([
+    db.doc(`puestos/${solicitud.puestoId}`).get(),
+    solicitud.telefono
+      ? db.collection('asistenciaPersonal').where('telefono', '==', solicitud.telefono).limit(20).get()
+      : Promise.resolve({ docs: [] }),
+  ]);
+  if (!puestoSnap.exists || puestoSnap.data()?.activo !== true) fail('failed-precondition', 'El puesto ya no esta activo.');
+  const nombreNormalizado = normalizarClave(solicitud.nombre);
+  const duplicado = samePhoneSnap.docs.find((doc) => doc.data()?.tipo === 'eventual' && normalizarClave(doc.data()?.nombre) === nombreNormalizado);
+  if (duplicado) fail('already-exists', 'Ya existe un eventual con el mismo nombre y telefono. Revisa Personal antes de aprobar.');
+
+  const clave = codigoPersonal('eventual');
+  const personRef = db.collection('asistenciaPersonal').doc();
+  const claveRef = db.doc(`asistenciaClaves/${clave}`);
+  const now = Timestamp.now();
+  const fields = validarPersonal({
+    clave,
+    nombre: solicitud.nombre,
+    telefono: solicitud.telefono,
+    tipo: 'eventual',
+    area: solicitud.area || '',
+    puestoId: solicitud.puestoId,
+    tarifaPersonalizada: null,
+    activo: true,
+    propiedadesPermitidas: propiedadesAprobadas,
+  });
+  const personData = {
+    ...fields,
+    propiedadId: propiedadesAprobadas[0],
+    puestoNombre: puestoSnap.data()?.nombre || '',
+    tarifaBase: Number(puestoSnap.data()?.tarifaHora || 0),
+    grupoNombre: solicitud.grupoNombre || '',
+    encargadoNombre: solicitud.encargadoNombre || '',
+    origenRegistro: 'formulario_publico',
+    solicitudEventualId: solicitudId,
+    creadoEn: now,
+    creadoPor: actor.id,
+    actualizadoEn: now,
+    actualizadoPor: actor.id,
+  };
+
+  await db.runTransaction(async (tx) => {
+    const current = await tx.get(ref);
+    if (!current.exists || current.data()?.estado !== 'pendiente') fail('failed-precondition', 'La solicitud ya fue atendida.');
+    tx.create(personRef, personData);
+    tx.create(claveRef, { empleadoId: personRef.id, clave, tipo: 'eventual', creadoEn: now, actualizadoEn: now });
+    tx.set(ref, {
+      estado: 'aprobada',
+      empleadoId: personRef.id,
+      clave,
+      qr: clave,
+      resueltaEn: now,
+      resueltaPor: actor.id,
+    }, { merge: true });
+  });
+  return { ok: true, estado: 'aprobada', empleadoId: personRef.id, clave, qr: clave };
 });
 
 export const asistenciaListarPersonal = endpoint(async (req) => {
@@ -1553,6 +1748,7 @@ export const asistenciaGuardarPersonal = endpoint(async (req) => {
       ...enriched,
       puestoNombre: data.nombre,
       tarifaBase: Number(data.tarifaHora || 0),
+      ...datosExtraEventual(req.data),
     };
   }
 
@@ -1778,6 +1974,8 @@ export const asistenciaConsultarEmpleado = endpoint(async (req) => {
         && row.empleadoId === empleadoId
         && row.propiedadId === propiedad.id
         && row.estado === 'completa'
+        && row.requiereRevision !== true
+        && (salidaMs - (row.entradaEn?.toMillis?.() || 0)) < (await limitesAsistencia()).eventual * 3600000
         && Number.isFinite(salidaMs)
         && salidaMs === reciente.salidaMs
       ) {
@@ -1799,8 +1997,17 @@ export const asistenciaConsultarEmpleado = endpoint(async (req) => {
     fail('failed-precondition', 'La persona esta inactiva.');
   }
 
+  const programacionesDisponibles = e.tipo === 'eventual'
+    ? await programasParaEntrada({ get: ref => ref.get() }, empleadoId, propiedad.id, Timestamp.now(), propiedad)
+    : [];
+  const fotoRostro = e.tipo === 'eventual' ? await fotoEventualComoDataUrl(e.fotoRostroPath) : '';
+  if (e.requiereCotejoVisual && !fotoRostro) {
+    fail('unavailable', 'No se pudo cargar la foto de identificacion. No registres sin verificar identidad.');
+  }
   return {
     empleado: {
+      fotoRostro,
+      requiereCotejoVisual: Boolean(e.requiereCotejoVisual),
       id: empleadoId,
       clave: e.clave,
       nombre: e.nombre,
@@ -1827,6 +2034,7 @@ export const asistenciaConsultarEmpleado = endpoint(async (req) => {
       : null,
     turnoPendiente,
     turnoReciente,
+    programacionesDisponibles,
     movimiento: turnoPendiente
       ? 'resolver_pendiente'
       : openId
@@ -1852,6 +2060,7 @@ export const asistenciaRegistrarMovimiento = endpoint(async (req) => {
     validacionPin = '',
     confirmarNuevoTurnoReciente = false,
     jornadaRecienteId = null,
+    cotejoFotoConfirmado = false,
   } = req.data || {};
 
   if (
@@ -1935,8 +2144,9 @@ export const asistenciaRegistrarMovimiento = endpoint(async (req) => {
   }
 
   const validationRef = pinValidationRef(uid, empleadoId);
+  const limitesMovimiento = await limitesAsistencia();
 
-  return db.runTransaction(async (tx) => {
+  const resultadoMovimiento = await db.runTransaction(async (tx) => {
     const [
       freshProfile,
       ps,
@@ -1978,6 +2188,9 @@ export const asistenciaRegistrarMovimiento = endpoint(async (req) => {
     if (existing.exists) return validateExisting(existing);
 
     const emp = empSnap.data();
+    if (emp?.requiereCotejoVisual && cotejoFotoConfirmado !== true) {
+      fail('failed-precondition', 'Debes confirmar el cotejo visual de la fotografia del eventual.');
+    }
 
     if (!empSnap.exists || !personalPuedeOperarEnPropiedad(emp, propiedadId)) {
       fail('not-found', 'Empleado no encontrado en esta propiedad.');
@@ -2012,6 +2225,14 @@ export const asistenciaRegistrarMovimiento = endpoint(async (req) => {
       fail('failed-precondition', 'La salida debe registrarse en la propiedad donde se abrió el turno.');
     }
 
+    if (tipo === 'salida' && emp.tipo === 'eventual' && jornada && !jornada.salidaEn) {
+      const horas = horasTranscurridasJornada(jornada, now.toMillis());
+      if (jornada.estado === 'salida_pendiente' || (horas !== null && horas >= limitesMovimiento.eventual)) {
+        tx.update(jornadaRef, { estado: 'salida_pendiente', requiereRevision: true,
+          limiteRevisionHoras: limitesMovimiento.eventual, salidaPendienteDesde: jornada.salidaPendienteDesde || now, actualizadoEn: now });
+        return { requiereRevision: true };
+      }
+    }
     let nuevaJornadaTrasSalidaReciente = null;
     if (tipo === 'entrada' && ['eventual', 'practicante'].includes(emp.tipo)) {
       const reciente = salidaRecienteDesdeEstado(state, propiedadId, now.toMillis());
@@ -2042,6 +2263,9 @@ export const asistenciaRegistrarMovimiento = endpoint(async (req) => {
       fail('failed-precondition', e.message);
     }
 
+    const tarifaAsignacion = tipo === 'entrada' && emp.tipo === 'eventual'
+      ? await tarifaParaEntrada(tx, empleadoId, emp, propiedadId, now, ps.data(), req.data?.programacionId || '')
+      : null;
     const movimiento = {
       solicitudId,
       jornadaId,
@@ -2080,12 +2304,14 @@ export const asistenciaRegistrarMovimiento = endpoint(async (req) => {
         empleadoNombre: emp.nombre,
         claveEmpleado: emp.clave,
         tipoPersonal: emp.tipo,
-        puestoId: emp.tipo === 'eventual' ? (emp.puestoId || '') : '',
-        puestoNombre: emp.tipo === 'eventual' ? (emp.puestoNombre || '') : '',
+        puestoId: tarifaAsignacion?.puestoId || (emp.tipo === 'eventual' ? (emp.puestoId || '') : ''),
+        puestoNombre: tarifaAsignacion?.puestoNombre || (emp.tipo === 'eventual' ? (emp.puestoNombre || '') : ''),
+        ...(tarifaAsignacion || {}),
+        limiteRevisionHoras: limitesMovimiento.eventual,
         area: emp.area || '',
         tarifaHoraAplicada:
           emp.tipo === 'eventual'
-            ? Number(emp.tarifaPersonalizada ?? emp.tarifaBase ?? 0)
+            ? (tarifaAsignacion?.tarifaHoraAplicada ?? Number(emp.tarifaPersonalizada ?? emp.tarifaBase ?? 0))
             : null,
         propiedadId,
         propiedadNombre: ps.data().nombre,
@@ -2110,6 +2336,7 @@ export const asistenciaRegistrarMovimiento = endpoint(async (req) => {
         origen: 'seguridad_gmr',
       });
 
+      if (tarifaAsignacion?.programacionId) tx.update(db.doc(`programacionPersonal/${tarifaAsignacion.programacionId}`), { jornadaId, vinculadaEn: now });
       tx.set(db.doc(`asistenciaEstado/${empleadoId}`), {
         propiedadId,
         jornadaAbiertaId: jornadaId,
@@ -2150,6 +2377,8 @@ export const asistenciaRegistrarMovimiento = endpoint(async (req) => {
       repetido: false,
     };
   });
+  if (resultadoMovimiento.requiereRevision) fail('failed-precondition', 'Turno excedido: se envio a revision de RH. No se registro salida ni pago. Vuelve a consultar a la persona.');
+  return resultadoMovimiento;
 });
 
 
@@ -2174,6 +2403,7 @@ export const asistenciaReabrirJornadaReciente = endpoint(async (req) => {
   const empRef = db.doc(`asistenciaPersonal/${empleadoId}`);
   const auditRef = db.collection('asistenciaAuditoria').doc();
 
+  const limitesReapertura = await limitesAsistencia();
   return db.runTransaction(async (tx) => {
     const [freshProfile, propertySnap, empSnap, stateSnap, jornadaSnap, existing] = await Promise.all([
       tx.get(db.doc(`usuarios/${uid}`)),
@@ -2230,6 +2460,7 @@ export const asistenciaReabrirJornadaReciente = endpoint(async (req) => {
 
     const state = stateSnap.data() || {};
     const old = jornadaSnap.data();
+    if(emp.tipo === 'eventual' && (old.requiereRevision || ((tiempoMs(old.salidaEn) || 0)-(tiempoMs(old.entradaEn) || 0)) >= limitesReapertura.eventual*3600000)) fail('failed-precondition','La jornada requiere revision con respaldo; no puede reabrirse desde Seguridad.');
     const now = Timestamp.now();
     const reciente = salidaRecienteDesdeEstado(state, propiedadId, now.toMillis());
     const salidaMs = old.salidaEn?.toMillis?.();
@@ -2398,6 +2629,7 @@ export const asistenciaResolverTurnoPendiente = endpoint(async (req) => {
 
     if (existing.exists) {
       const oldMovement = existing.data();
+      if(oldMovement.registradoPor!==uid || oldMovement.empleadoId!==empleadoId || oldMovement.propiedadId!==propiedadId) fail('already-exists','La solicitud pertenece a otra operacion.');
       return {
         id: existing.id,
         jornadaId: oldMovement.jornadaId,
@@ -2411,6 +2643,7 @@ export const asistenciaResolverTurnoPendiente = endpoint(async (req) => {
 
     if (!empSnap.exists) fail('not-found', 'Empleado no encontrado.');
     const emp = empSnap.data();
+    if (emp.tipo === 'eventual') fail('failed-precondition','Actualiza la APK: envia el turno a revision y registra la nueva entrada con el flujo normal de fotografia.');
     if (!['eventual', 'practicante'].includes(emp.tipo)) {
       fail('failed-precondition', 'Este flujo solo aplica a eventuales y practicantes.');
     }
@@ -2421,6 +2654,7 @@ export const asistenciaResolverTurnoPendiente = endpoint(async (req) => {
     if (!oldSnap.exists) fail('failed-precondition', 'El turno anterior ya no existe. Actualiza la consulta.');
     const old = oldSnap.data();
     const state = stateSnap.data() || {};
+    if (!emp.activo || old.empleadoId!==empleadoId) fail('failed-precondition','Persona inactiva o jornada incorrecta.');
     if (state.jornadaAbiertaId !== jornadaPendienteId || old.salidaEn) {
       fail('failed-precondition', 'El turno anterior ya fue modificado. Vuelve a escanear el QR.');
     }
@@ -2432,12 +2666,15 @@ export const asistenciaResolverTurnoPendiente = endpoint(async (req) => {
     }
 
     const now = Timestamp.now();
+    const tarifaAsignacion = emp.tipo === 'eventual' ? await tarifaParaEntrada(tx,empleadoId,emp,propiedadId,now,propiedad,req.data?.programacionId || '') : null;
 
     tx.update(jornadaAnteriorRef, {
       estado: 'sin_salida',
       salidaEn: null,
       minutos: null,
       motivoCierre: 'no_checo_salida',
+      requiereRevision: true,
+      limiteRevisionHoras: limite,
       salidaOmitidaConfirmadaPor: uid,
       salidaOmitidaConfirmadaPorNombre: fresh.nombre || '',
       salidaOmitidaConfirmadaEn: now,
@@ -2453,9 +2690,11 @@ export const asistenciaResolverTurnoPendiente = endpoint(async (req) => {
       puestoId: emp.tipo === 'eventual' ? (emp.puestoId || '') : '',
       puestoNombre: emp.tipo === 'eventual' ? (emp.puestoNombre || '') : '',
       area: emp.area || '',
+      ...(tarifaAsignacion || {}),
+      limiteRevisionHoras: limite,
       tarifaHoraAplicada:
         emp.tipo === 'eventual'
-          ? Number(emp.tarifaPersonalizada ?? emp.tarifaBase ?? 0)
+          ? (tarifaAsignacion?.tarifaHoraAplicada ?? Number(emp.tarifaPersonalizada ?? emp.tarifaBase ?? 0))
           : null,
       propiedadId,
       propiedadNombre: propiedad.nombre,
@@ -2475,6 +2714,7 @@ export const asistenciaResolverTurnoPendiente = endpoint(async (req) => {
       origen: 'seguridad_gmr',
     });
 
+    if(tarifaAsignacion?.programacionId) tx.update(db.doc(`programacionPersonal/${tarifaAsignacion.programacionId}`),{jornadaId:solicitudId,vinculadaEn:now});
     tx.create(movRef, {
       solicitudId,
       jornadaId: solicitudId,
@@ -2529,6 +2769,7 @@ export const asistenciaResolverTurnoPendiente = endpoint(async (req) => {
 
 export const asistenciaResolverTurnoAdministrativo = endpoint(async (req) => {
   const p = await administradorORHResolverEventuales(req.auth.uid);
+  fail('failed-precondition', 'Utiliza Revision / editar con respaldo. Toda correccion de Eventuales requiere un documento.');
   const { jornadaId, accion, salidaIso, motivo } = req.data || {};
 
   if (!idValido(jornadaId)) {
@@ -2724,6 +2965,7 @@ export const asistenciaCerrarJornadaManual = endpoint(async (req) => {
     const ref = db.doc(`asistenciaJornadas/${jornadaId}`);
     const snap = await tx.get(ref);
     const old = snap.data();
+    if (old?.tipoPersonal === 'eventual') fail('failed-precondition', 'Utiliza Revision / editar con respaldo para Eventuales.');
     if (!snap.exists || !['abierta', 'salida_pendiente', 'sin_salida'].includes(old.estado)) fail('failed-precondition', 'La jornada ya no admite correccion manual. Actualiza el reporte.');
     const stateRef = db.doc(`asistenciaEstado/${old.empleadoId}`);
     const state = await tx.get(stateRef);
@@ -2750,4 +2992,684 @@ export const asistenciaConsultarSolicitud = endpoint(async (req) => {
   if (m.registradoPor !== req.auth.uid || !puedeVerPropiedad(p, m.propiedadId)) fail('permission-denied', 'Consulta no permitida.');
   return { confirmado: true, id: snap.id, tipo: m.tipo, empleadoNombre: m.empleadoNombre,
     registradaEn: encodeTime(m.registradaEn) };
+});
+
+// October update: documented corrections, multi-date needs and per-shift job rates.
+async function programasParaEntrada(reader, empleadoId, propiedadId, now, property) {
+  const zone = property?.asistencia?.zonaHoraria || 'America/Mexico_City';
+  const date = fechaEnZona(now.toDate(), zone);
+  const snap = await reader.get(db.collection('programacionPersonal').where('empleadoId','==',empleadoId)
+    .where('fecha','>=',sumarDiasIso(date,-1)).where('fecha','<=',date));
+  const rows = snap.docs.map(plainDoc).filter(a => a.propiedadId === propiedadId);
+  return candidatosDeEntrada(rows, now.toMillis(), zone);
+}
+async function tarifaParaEntrada(tx, empleadoId, emp, propiedadId, now, property, seleccion = '') {
+  const list = await programasParaEntrada(tx,empleadoId,propiedadId,now,property);
+  if (list.length > 1 && !seleccion) fail('failed-precondition','Hay varias asignaciones posibles. Vuelve a consultar y selecciona el turno que vas a iniciar.');
+  const asg = seleccion ? list.find(a => a.id === seleccion) : list[0];
+  if (seleccion && !asg) fail('failed-precondition','La asignacion ya no esta disponible. Vuelve a consultar.');
+  if (!asg) return {puestoId:emp.puestoId || '',puestoNombre:emp.puestoNombre || '',tarifaHoraAplicada:Number(emp.tarifaPersonalizada ?? emp.tarifaBase ?? 0),origenTarifa:'puesto_habitual',programacionId:null,puestoHabitualId:emp.puestoId || '',horarioIdPlanificado:'',horarioNombrePlanificado:'',horaInicioPlanificada:'',horaFinPlanificada:'',minutosTurnoPlanificado:null,cruzaDiaPlanificado:false};
+  const needSnap = await tx.get(db.doc(`necesidadesPersonal/${asg.necesidadId}`));
+  if (!needSnap.exists || needSnap.data().activo === false) fail('failed-precondition','La necesidad cambio. Vuelve a consultar.');
+  const need = needSnap.data();
+  const horaInicioPlanificada = asg.horaInicio || need.horaInicio || '';
+  const horaFinPlanificada = asg.horaFin || need.horaFin || '';
+  const minutosTurnoPlanificado = Number(asg.minutosDuracion || need.minutosDuracion || (horaValida(horaInicioPlanificada) && horaValida(horaFinPlanificada) ? datosDuracionHorario(horaInicioPlanificada,horaFinPlanificada).minutosDuracion : 0)) || null;
+  return { puestoId:asg.puestoId,puestoNombre:asg.puestoNombre || need.puestoNombre || '',tarifaHoraAplicada:tarifaPlanificada(asg,need),origenTarifa:'puesto_asignado',programacionId:asg.id,necesidadId:asg.necesidadId,puestoHabitualId:emp.puestoId || '',versionTarifa:2,horarioIdPlanificado:asg.horarioId || need.horarioId || '',horarioNombrePlanificado:asg.horarioNombre || need.horarioNombre || '',horaInicioPlanificada,horaFinPlanificada,minutosTurnoPlanificado,cruzaDiaPlanificado:asg.cruzaDia===true || need.cruzaDia===true };
+}
+export const asistenciaProgramacionesReporte = endpoint(async (req) => {
+  const p = await perfil(req.auth.uid);
+  const propiedadId = String(req.data?.propiedadId || '').trim();
+  const ids = [...new Set(Array.isArray(req.data?.programacionIds) ? req.data.programacionIds.map((id) => String(id || '').trim()).filter(Boolean) : [])];
+  if (!(p.rol === 'administrador' || tienePermiso(p, PERMISOS.REPORTES_EVENTUALES))) fail('permission-denied','No tienes permiso para consultar programaciones de Eventuales.');
+  if (!idValido(propiedadId) || !puedeVerPropiedad(p, propiedadId)) fail('permission-denied','No tienes acceso a esa propiedad.');
+  if (ids.length > 300 || ids.some((id) => !idValido(id))) fail('invalid-argument','La lista de programaciones no es valida.');
+  const snaps = await Promise.all(ids.map((id) => db.doc(`programacionPersonal/${id}`).get()));
+  const rows = snaps.filter((snap) => snap.exists && snap.data()?.propiedadId === propiedadId).map((snap) => {
+    const d = snap.data() || {};
+    return {
+      id: snap.id, fecha: d.fecha || '', horarioId: d.horarioId || '', horarioNombre: d.horarioNombre || '',
+      horaInicio: d.horaInicio || '', horaFin: d.horaFin || '', minutosDuracion: Number(d.minutosDuracion || 0),
+      cruzaDia: d.cruzaDia === true, puestoId: d.puestoId || '', puestoNombre: d.puestoNombre || '',
+    };
+  });
+  return { rows };
+});
+
+export const planeacionGuardarNecesidadesVariosDias = endpoint(async req => {
+  const actor = await actorConPermiso(req.auth.uid,PERMISOS.PLANEACION_PERSONAL);
+  const {propiedadId,horarioId,puestoId,cantidadNecesaria,fechas,observaciones=''} = req.data || {};
+  if (![propiedadId,horarioId,puestoId].every(idValido) || !Array.isArray(fechas) || !fechas.length || fechas.length>31 || fechas.some(f=>!fechaIsoValida(f)) || !Number.isInteger(Number(cantidadNecesaria)) || Number(cantidadNecesaria)<1 || Number(cantidadNecesaria)>100 || typeof observaciones !== 'string' || observaciones.length>500) fail('invalid-argument','Revisa fechas (hasta 31), horario, puesto y cantidad de 1 a 100.');
+  const dates = [...new Set(fechas)].sort();
+  return db.runTransaction(async tx => {
+    const [ps,hs,js,fresh] = await Promise.all([tx.get(db.doc(`propiedades/${propiedadId}`)),tx.get(db.doc(`horarios/${horarioId}`)),tx.get(db.doc(`puestos/${puestoId}`)),tx.get(db.doc(`usuarios/${actor.id}`))]);
+    if (!tienePermiso({...fresh.data(),id:actor.id},PERMISOS.PLANEACION_PERSONAL) || !puedeVerPropiedad(fresh.data(),propiedadId)) fail('permission-denied','Tus permisos cambiaron.');
+    if (!ps.exists || ps.data().activo!==true || !hs.exists || hs.data().activo===false || !js.exists || js.data().activo===false) fail('failed-precondition','Propiedad, horario o puesto inactivo.');
+    const targets = dates.map(fecha=>({fecha,ref:db.doc(`necesidadesPersonal/nec_${hash(`${propiedadId}\0${fecha}\0${horarioId}\0${puestoId}`)}`)}));
+    const current = await Promise.all(targets.map(t=>tx.get(t.ref)));
+    const omitidas = targets.filter((_,i)=>current[i].exists && current[i].data().activo!==false).map(t=>t.fecha);
+    const now=Timestamp.now(), h=hs.data(),j=js.data(), cantidad=Number(cantidadNecesaria);
+    const dur=datosDuracionHorario(h.horaInicio,h.horaFin);
+    targets.forEach((t,i)=>{
+      if (omitidas.includes(t.fecha)) return;
+      tx.set(t.ref,{propiedadId,propiedadNombre:ps.data().nombre || '',fecha:t.fecha,horarioId,horarioNombre:h.nombre || '',horaInicio:h.horaInicio,horaFin:h.horaFin,...dur,puestoId,puestoNombre:j.nombre || '',tarifaHora:Number(j.tarifaHora || 0),cantidadNecesaria:cantidad,costoEstimado:Math.round(dur.minutosDuracion/60*Number(j.tarifaHora || 0)*cantidad*100)/100,observaciones:observaciones.trim(),activo:true,creadoEn:now,creadoPor:actor.id,actualizadoEn:now,actualizadoPor:actor.id});
+    });
+    return {creadas:targets.length-omitidas.length,omitidas:omitidas.length,fechasOmitidas:omitidas};
+  });
+});
+
+function requisicionPuedeSolicitar(actor) {
+  return actor?.rol === 'administrador'
+    || tienePermiso(actor, PERMISOS.SOLICITAR_PERSONAL)
+    || tienePermiso(actor, PERMISOS.AUTORIZAR_REQUISICIONES_PERSONAL);
+}
+
+function requisicionPuedeAutorizar(actor) {
+  return actor?.rol === 'administrador'
+    || tienePermiso(actor, PERMISOS.AUTORIZAR_REQUISICIONES_PERSONAL)
+    || (actor?.rol === 'rh' && tienePermiso(actor, PERMISOS.PLANEACION_PERSONAL));
+}
+
+function fechasPeriodoRequisicion(desde, hasta) {
+  if (!fechaIsoValida(desde) || !fechaIsoValida(hasta) || hasta < desde) {
+    fail('invalid-argument', 'Revisa el periodo solicitado.');
+  }
+  const dates = [];
+  let cursor = desde;
+  while (cursor <= hasta && dates.length <= 31) {
+    dates.push(cursor);
+    cursor = sumarDiasIso(cursor, 1);
+  }
+  if (!dates.length || dates.length > 31 || dates.at(-1) !== hasta) {
+    fail('invalid-argument', 'Una requisicion puede abarcar como maximo 31 dias.');
+  }
+  return dates;
+}
+
+function fechasPartidaRequisicion(item = {}) {
+  if (Array.isArray(item.fechas) && item.fechas.length) {
+    const fechas = [...new Set(item.fechas.map((value) => String(value || '').trim()))].sort();
+    if (!fechas.length || fechas.length > 31 || fechas.some((value) => !fechaIsoValida(value))) {
+      fail('invalid-argument', 'Revisa los dias seleccionados de la requisicion.');
+    }
+    return fechas;
+  }
+  return fechasPeriodoRequisicion(String(item.fechaDesde || '').trim(), String(item.fechaHasta || '').trim());
+}
+
+function codigoFolioRequisicion(value) {
+  return String(value || 'GMR')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 8) || 'GMR';
+}
+
+function requisicionPlain(docSnap) {
+  const row = plainDoc(docSnap);
+  for (const key of ['autorizadoEn', 'rechazadoEn']) {
+    if (row[key]?.toDate) row[key] = row[key].toDate().toISOString();
+  }
+  return row;
+}
+
+export const requisicionesCatalogos = endpoint(async (req) => {
+  const actor = await perfil(req.auth.uid);
+  if (!requisicionPuedeSolicitar(actor)) {
+    fail('permission-denied', 'Esta cuenta no puede solicitar personal.');
+  }
+  const [propertiesSnap, puestosSnap, horariosSnap] = await Promise.all([
+    db.collection('propiedades').where('activo', '==', true).get(),
+    db.collection('puestos').where('activo', '==', true).get(),
+    db.collection('horarios').where('activo', '==', true).get(),
+  ]);
+  const propiedades = propertiesSnap.docs
+    .filter((docSnap) => puedeVerPropiedad(actor, docSnap.id))
+    .map((docSnap) => ({ id: docSnap.id, nombre: docSnap.data()?.nombre || '', codigo: docSnap.data()?.codigo || '' }))
+    .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+  const puestos = puestosSnap.docs
+    .map((docSnap) => ({ id: docSnap.id, nombre: docSnap.data()?.nombre || '', tarifaHora: Number(docSnap.data()?.tarifaHora || 0) }))
+    .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+  const horarios = horariosSnap.docs
+    .map((docSnap) => ({ id: docSnap.id, nombre: docSnap.data()?.nombre || '', horaInicio: docSnap.data()?.horaInicio || '', horaFin: docSnap.data()?.horaFin || '' }))
+    .sort((a, b) => String(a.horaInicio).localeCompare(String(b.horaInicio)) || a.nombre.localeCompare(b.nombre, 'es'));
+  return { propiedades, puestos, horarios, puedeAutorizar: requisicionPuedeAutorizar(actor) };
+});
+
+export const requisicionesListar = endpoint(async (req) => {
+  const actor = await perfil(req.auth.uid);
+  if (!requisicionPuedeSolicitar(actor)) {
+    fail('permission-denied', 'Esta cuenta no puede consultar requisiciones de personal.');
+  }
+  const puedeAutorizar = requisicionPuedeAutorizar(actor);
+  const propiedadFiltro = String(req.data?.propiedadId || '').trim();
+  if (propiedadFiltro) await autorizarPropiedad(actor, propiedadFiltro);
+  let query = db.collection('requisicionesPersonal');
+  if (!puedeAutorizar) query = query.where('solicitanteId', '==', actor.id);
+  else if (propiedadFiltro) query = query.where('propiedadId', '==', propiedadFiltro);
+  const snap = await query.limit(300).get();
+  const solicitudes = snap.docs
+    .map(requisicionPlain)
+    .filter((row) => puedeVerPropiedad(actor, row.propiedadId))
+    .sort((a, b) => String(b.creadoEn || '').localeCompare(String(a.creadoEn || '')));
+  return { solicitudes, puedeAutorizar, limite: 300 };
+});
+
+function normalizarPartidasRequisicion(data = {}) {
+  const raw = Array.isArray(data.partidas) && data.partidas.length
+    ? data.partidas
+    : [{
+        partidaId: 'legacy_1',
+        puestoId: data.puestoId,
+        horarioId: data.horarioId,
+        cantidadPersonas: data.cantidadPersonas,
+        fechaDesde: data.fechaDesde,
+        fechaHasta: data.fechaHasta,
+      }];
+  if (!raw.length || raw.length > 40) fail('invalid-argument', 'Agrega entre 1 y 40 necesidades por requisicion.');
+  let diasExpandidos = 0;
+  const result = raw.map((item, index) => {
+    const puestoId = String(item?.puestoId || '').trim();
+    const horarioId = String(item?.horarioId || '').trim();
+    if (![puestoId, horarioId].every(idValido)) fail('invalid-argument', `Revisa puesto y horario de la necesidad ${index + 1}.`);
+    const cantidadPersonas = Number(item?.cantidadPersonas);
+    if (!Number.isInteger(cantidadPersonas) || cantidadPersonas < 1 || cantidadPersonas > 100) {
+      fail('invalid-argument', `La cantidad de la necesidad ${index + 1} debe estar entre 1 y 100.`);
+    }
+    const fechas = fechasPartidaRequisicion(item || {});
+    const fechaDesde = fechas[0];
+    const fechaHasta = fechas.at(-1);
+    diasExpandidos += fechas.length;
+    const rawId = String(item?.partidaId || '').trim();
+    return {
+      partidaId: /^[A-Za-z0-9_-]{1,80}$/.test(rawId) ? rawId : `p_${String(index + 1).padStart(2, '0')}`,
+      puestoId,
+      horarioId,
+      cantidadPersonas,
+      fechas,
+      fechaDesde,
+      fechaHasta,
+      diasSolicitados: fechas.length,
+    };
+  });
+  if (diasExpandidos > 180) fail('invalid-argument', 'La requisicion supera 180 dias-renglon. Divide la solicitud en dos folios.');
+  return result;
+}
+
+function partidasGuardadasRequisicion(row = {}) {
+  if (Array.isArray(row.partidas) && row.partidas.length) return row.partidas;
+  if (!row.puestoId || !row.horarioId) return [];
+  return [{
+    partidaId: 'legacy_1',
+    puestoId: row.puestoId,
+    puestoNombre: row.puestoNombre || '',
+    horarioId: row.horarioId,
+    horarioNombre: row.horarioNombre || '',
+    horaInicio: row.horaInicio || '',
+    horaFin: row.horaFin || '',
+    cantidadPersonas: Number(row.cantidadPersonas || 0),
+    fechas: fechasPeriodoRequisicion(row.fechaDesde || '', row.fechaHasta || ''),
+    fechaDesde: row.fechaDesde || '',
+    fechaHasta: row.fechaHasta || '',
+    diasSolicitados: Number(row.diasSolicitados || 0),
+  }];
+}
+
+export const requisicionesCrear = endpoint(async (req) => {
+  const actor = await perfil(req.auth.uid);
+  if (!requisicionPuedeSolicitar(actor)) fail('permission-denied', 'Esta cuenta no puede solicitar personal.');
+  const propiedadId = String(req.data?.propiedadId || '').trim();
+  if (!idValido(propiedadId)) fail('invalid-argument', 'Revisa la propiedad.');
+  await autorizarPropiedad(actor, propiedadId);
+  const departamentoSolicitante = textoLimitado(req.data?.departamentoSolicitante, 120, true, 'Departamento solicitante');
+  const motivo = textoLimitado(req.data?.motivo, 120, true, 'Motivo');
+  const descripcionCausa = textoLimitado(req.data?.descripcionCausa, 700, true, 'Descripcion de la causa');
+  const formaPago = textoLimitado(req.data?.formaPago || 'Efectivo', 80, true, 'Forma de pago');
+  const personasPropuestas = textoLimitado(req.data?.personasPropuestas, 1800, false, 'Personas propuestas');
+  const partidasEntrada = normalizarPartidasRequisicion(req.data || {});
+  const puestoIds = [...new Set(partidasEntrada.map((item) => item.puestoId))];
+  const horarioIds = [...new Set(partidasEntrada.map((item) => item.horarioId))];
+  const requestRef = db.collection('requisicionesPersonal').doc();
+  const auditRef = db.collection('auditoria').doc();
+  const year = new Date(Timestamp.now().toMillis()).getUTCFullYear();
+  const counterRef = db.doc(`contadores/requisiciones_${propiedadId}_${year}`);
+
+  return db.runTransaction(async (tx) => {
+    const refs = [
+      db.doc(`usuarios/${actor.id}`),
+      db.doc(`propiedades/${propiedadId}`),
+      counterRef,
+      ...puestoIds.map((id) => db.doc(`puestos/${id}`)),
+      ...horarioIds.map((id) => db.doc(`horarios/${id}`)),
+    ];
+    const snaps = await Promise.all(refs.map((ref) => tx.get(ref)));
+    const freshActor = snaps[0];
+    const propertySnap = snaps[1];
+    const counterSnap = snaps[2];
+    const puestoSnaps = snaps.slice(3, 3 + puestoIds.length);
+    const horarioSnaps = snaps.slice(3 + puestoIds.length);
+    const fresh = { ...(freshActor.data() || {}), id: actor.id };
+    if (fresh.activo !== true || !requisicionPuedeSolicitar(fresh) || !puedeVerPropiedad(fresh, propiedadId)) {
+      fail('permission-denied', 'Tus permisos cambiaron o no puedes solicitar para esta propiedad.');
+    }
+    if (!propertySnap.exists || propertySnap.data()?.activo !== true) fail('failed-precondition', 'La propiedad ya no esta activa.');
+    const puestosMap = new Map();
+    puestoSnaps.forEach((snap, index) => {
+      if (!snap.exists || snap.data()?.activo === false) fail('failed-precondition', `El puesto ${puestoIds[index]} ya no esta activo.`);
+      puestosMap.set(puestoIds[index], snap.data());
+    });
+    const horariosMap = new Map();
+    horarioSnaps.forEach((snap, index) => {
+      if (!snap.exists || snap.data()?.activo === false) fail('failed-precondition', `El horario ${horarioIds[index]} ya no esta activo.`);
+      horariosMap.set(horarioIds[index], snap.data());
+    });
+
+    const partidas = partidasEntrada.map((item) => {
+      const puesto = puestosMap.get(item.puestoId);
+      const horario = horariosMap.get(item.horarioId);
+      return {
+        ...item,
+        puestoNombre: puesto?.nombre || '',
+        horarioNombre: horario?.nombre || '',
+        horaInicio: horario?.horaInicio || '',
+        horaFin: horario?.horaFin || '',
+      };
+    });
+    const consecutivo = Number(counterSnap.data()?.ultimo || 0) + 1;
+    const code = codigoFolioRequisicion(propertySnap.data()?.codigo || propiedadId);
+    const folio = `REQ-${code}-${year}-${String(consecutivo).padStart(4, '0')}`;
+    const now = Timestamp.now();
+    const fechas = partidas.flatMap((item) => fechasPartidaRequisicion(item)).sort();
+    const primera = partidas[0];
+    const turnosPersonaSolicitados = partidas.reduce((sum, item) => sum + Number(item.cantidadPersonas) * Number(item.diasSolicitados), 0);
+    const values = {
+      folio,
+      propiedadId,
+      propiedadNombre: propertySnap.data()?.nombre || '',
+      departamentoSolicitante,
+      partidas,
+      cantidadPartidas: partidas.length,
+      turnosPersonaSolicitados,
+      fechaDesde: fechas[0],
+      fechaHasta: fechas.at(-1),
+      puestoId: primera.puestoId,
+      puestoNombre: partidas.length === 1 ? primera.puestoNombre : `${partidas.length} necesidades`,
+      horarioId: primera.horarioId,
+      horarioNombre: primera.horarioNombre,
+      horaInicio: primera.horaInicio,
+      horaFin: primera.horaFin,
+      cantidadPersonas: primera.cantidadPersonas,
+      diasSolicitados: new Set(partidas.flatMap((item) => fechasPartidaRequisicion(item))).size,
+      motivo,
+      descripcionCausa,
+      formaPago,
+      personasPropuestas,
+      solicitanteId: actor.id,
+      solicitanteNombre: fresh.nombre || fresh.correo || 'Solicitante',
+      estado: 'pendiente_autorizacion',
+      necesidadesIds: [],
+      creadoEn: now,
+      actualizadoEn: now,
+      actualizadoPor: actor.id,
+    };
+    tx.set(counterRef, { ultimo: consecutivo, actualizadoEn: now }, { merge: true });
+    tx.create(requestRef, values);
+    tx.create(auditRef, {
+      accion: 'crear_requisicion_personal',
+      requisicionId: requestRef.id,
+      folio,
+      propiedadId,
+      partidas: partidas.length,
+      turnosPersonaSolicitados,
+      por: actor.id,
+      creadaEn: now,
+    });
+    return { requisicionId: requestRef.id, folio, estado: values.estado, partidas: partidas.length, turnosPersonaSolicitados };
+  });
+});
+
+export const requisicionesAutorizar = endpoint(async (req) => {
+  const actor = await perfil(req.auth.uid);
+  if (!requisicionPuedeAutorizar(actor)) fail('permission-denied', 'Esta cuenta no puede autorizar requisiciones.');
+  const requisicionId = String(req.data?.requisicionId || '').trim();
+  if (!idValido(requisicionId)) fail('invalid-argument', 'Requisicion invalida.');
+  const reqRef = db.doc(`requisicionesPersonal/${requisicionId}`);
+  const initial = await reqRef.get();
+  if (!initial.exists) fail('not-found', 'La requisicion ya no existe.');
+  const current = initial.data();
+  await autorizarPropiedad(actor, current.propiedadId);
+  if (current.estado === 'autorizada') return { ok: true, repetido: true, necesidadesIds: current.necesidadesIds || [] };
+  if (current.estado !== 'pendiente_autorizacion') fail('failed-precondition', 'La requisicion ya fue atendida.');
+  const partidas = partidasGuardadasRequisicion(current);
+  if (!partidas.length || partidas.length > 40) fail('failed-precondition', 'La requisicion no contiene necesidades validas.');
+
+  const agregados = new Map();
+  for (const partida of partidas) {
+    if (![partida.puestoId, partida.horarioId].every(idValido)) fail('failed-precondition', 'La requisicion contiene un puesto u horario invalido.');
+    const cantidad = Number(partida.cantidadPersonas || 0);
+    if (!Number.isInteger(cantidad) || cantidad < 1 || cantidad > 100) fail('failed-precondition', 'La requisicion contiene una cantidad invalida.');
+    const fechas = fechasPartidaRequisicion(partida);
+    for (const fecha of fechas) {
+      const id = `nec_${hash(`${current.propiedadId}\0${fecha}\0${partida.horarioId}\0${partida.puestoId}`)}`;
+      const prev = agregados.get(id) || {
+        id, fecha, puestoId: partida.puestoId, horarioId: partida.horarioId, cantidad: 0, partidas: [],
+      };
+      prev.cantidad += cantidad;
+      prev.partidas.push({ partidaId: partida.partidaId || '', cantidad });
+      agregados.set(id, prev);
+    }
+  }
+  if (agregados.size > 180) fail('failed-precondition', 'La requisicion genera demasiadas necesidades para una sola autorizacion.');
+  for (const item of agregados.values()) {
+    if (item.cantidad > 100) fail('failed-precondition', `La necesidad del ${item.fecha} supera 100 personas dentro de la misma requisicion.`);
+  }
+
+  const targets = [...agregados.values()].sort((a, b) => a.fecha.localeCompare(b.fecha) || a.horarioId.localeCompare(b.horarioId) || a.puestoId.localeCompare(b.puestoId));
+  const targetRefs = targets.map((item) => db.doc(`necesidadesPersonal/${item.id}`));
+  const puestoIds = [...new Set(partidas.map((item) => item.puestoId))];
+  const horarioIds = [...new Set(partidas.map((item) => item.horarioId))];
+  const auditRef = db.collection('auditoria').doc();
+
+  return db.runTransaction(async (tx) => {
+    const readRefs = [
+      db.doc(`usuarios/${actor.id}`), reqRef,
+      db.doc(`propiedades/${current.propiedadId}`),
+      ...horarioIds.map((id) => db.doc(`horarios/${id}`)),
+      ...puestoIds.map((id) => db.doc(`puestos/${id}`)),
+      ...targetRefs,
+    ];
+    const snaps = await Promise.all(readRefs.map((ref) => tx.get(ref)));
+    let offset = 0;
+    const freshActor = snaps[offset++];
+    const freshReq = snaps[offset++];
+    const propertySnap = snaps[offset++];
+    const horarioSnaps = snaps.slice(offset, offset + horarioIds.length); offset += horarioIds.length;
+    const puestoSnaps = snaps.slice(offset, offset + puestoIds.length); offset += puestoIds.length;
+    const needSnaps = snaps.slice(offset);
+    const fresh = { ...(freshActor.data() || {}), id: actor.id };
+    if (fresh.activo !== true || !requisicionPuedeAutorizar(fresh) || !puedeVerPropiedad(fresh, current.propiedadId)) {
+      fail('permission-denied', 'Tus permisos cambiaron o no puedes autorizar esta propiedad.');
+    }
+    if (!freshReq.exists) fail('not-found', 'La requisicion ya no existe.');
+    const requisicion = freshReq.data();
+    if (requisicion.estado === 'autorizada') return { ok: true, repetido: true, necesidadesIds: requisicion.necesidadesIds || [] };
+    if (requisicion.estado !== 'pendiente_autorizacion') fail('failed-precondition', 'La requisicion ya fue atendida.');
+    if (!propertySnap.exists || propertySnap.data()?.activo !== true) fail('failed-precondition', 'La propiedad ya no esta activa.');
+
+    const horariosMap = new Map();
+    horarioSnaps.forEach((snap, index) => {
+      if (!snap.exists || snap.data()?.activo === false) fail('failed-precondition', `El horario ${horarioIds[index]} ya no esta activo.`);
+      horariosMap.set(horarioIds[index], snap.data());
+    });
+    const puestosMap = new Map();
+    puestoSnaps.forEach((snap, index) => {
+      if (!snap.exists || snap.data()?.activo === false) fail('failed-precondition', `El puesto ${puestoIds[index]} ya no esta activo.`);
+      puestosMap.set(puestoIds[index], snap.data());
+    });
+
+    const now = Timestamp.now();
+    let creadas = 0;
+    let actualizadas = 0;
+    targets.forEach((target, index) => {
+      const snap = needSnaps[index];
+      const ref = targetRefs[index];
+      const old = snap.exists ? snap.data() : null;
+      const activa = old && old.activo !== false;
+      const cantidadAnterior = activa ? Number(old.cantidadNecesaria || 0) : 0;
+      const nuevaCantidad = cantidadAnterior + target.cantidad;
+      if (nuevaCantidad > 100) fail('failed-precondition', `La necesidad del ${target.fecha} superaria 100 personas.`);
+      const horario = horariosMap.get(target.horarioId);
+      const puesto = puestosMap.get(target.puestoId);
+      const dur = datosDuracionHorario(horario.horaInicio, horario.horaFin);
+      const tarifaActual = Number(puesto.tarifaHora || 0);
+      if (!Number.isFinite(tarifaActual) || tarifaActual < 0) fail('failed-precondition', `La tarifa de ${puesto.nombre || target.puestoId} no es valida.`);
+      const minutosDuracion = activa && Number.isFinite(Number(old.minutosDuracion)) ? Number(old.minutosDuracion) : dur.minutosDuracion;
+      const tarifaHora = activa && Number.isFinite(Number(old.tarifaHora)) ? Number(old.tarifaHora) : tarifaActual;
+      const origins = activa && Array.isArray(old.requisicionesOrigen) ? old.requisicionesOrigen.filter((item) => item?.requisicionId !== requisicionId) : [];
+      origins.push({ requisicionId, folio: requisicion.folio || '', cantidad: target.cantidad, partidas: target.partidas });
+      tx.set(ref, {
+        propiedadId: requisicion.propiedadId,
+        propiedadNombre: propertySnap.data()?.nombre || requisicion.propiedadNombre || '',
+        fecha: target.fecha,
+        horarioId: target.horarioId,
+        horarioNombre: activa ? (old.horarioNombre || horario.nombre || '') : (horario.nombre || ''),
+        horaInicio: activa ? (old.horaInicio || horario.horaInicio || '') : (horario.horaInicio || ''),
+        horaFin: activa ? (old.horaFin || horario.horaFin || '') : (horario.horaFin || ''),
+        minutosDuracion,
+        cruzaDia: activa ? old.cruzaDia === true : dur.cruzaDia,
+        puestoId: target.puestoId,
+        puestoNombre: activa ? (old.puestoNombre || puesto.nombre || '') : (puesto.nombre || ''),
+        tarifaHora,
+        cantidadNecesaria: nuevaCantidad,
+        costoEstimado: Math.round((minutosDuracion / 60) * tarifaHora * nuevaCantidad * 100) / 100,
+        observaciones: activa ? (old.observaciones || '') : `Requisicion ${requisicion.folio || requisicionId}`,
+        requisicionesOrigen: origins,
+        activo: true,
+        actualizadoEn: now,
+        actualizadoPor: actor.id,
+        ...(!activa ? { creadoEn: now, creadoPor: actor.id } : {}),
+      }, { merge: true });
+      if (activa) actualizadas += 1; else creadas += 1;
+    });
+
+    const targetIds = targets.map((item) => item.id);
+    const turnosPersonaSolicitados = partidas.reduce((sum, item) => sum + Number(item.cantidadPersonas || 0) * fechasPartidaRequisicion(item).length, 0);
+    tx.set(reqRef, {
+      estado: 'autorizada',
+      autorizadoPor: actor.id,
+      autorizadoPorNombre: fresh.nombre || fresh.correo || 'Autorizador',
+      autorizadoEn: now,
+      necesidadesIds: targetIds,
+      actualizadoEn: now,
+      actualizadoPor: actor.id,
+    }, { merge: true });
+    tx.create(auditRef, {
+      accion: 'autorizar_requisicion_personal',
+      requisicionId,
+      folio: requisicion.folio || '',
+      propiedadId: requisicion.propiedadId,
+      necesidadesIds: targetIds,
+      partidas: partidas.length,
+      turnosPersonaSolicitados,
+      por: actor.id,
+      creadaEn: now,
+    });
+    return { ok: true, requisicionId, necesidadesIds: targetIds, creadas, actualizadas, partidas: partidas.length, turnosPersonaSolicitados };
+  });
+});
+
+export const requisicionesRechazar = endpoint(async (req) => {
+  const actor = await perfil(req.auth.uid);
+  if (!requisicionPuedeAutorizar(actor)) fail('permission-denied', 'Esta cuenta no puede rechazar requisiciones.');
+  const requisicionId = String(req.data?.requisicionId || '').trim();
+  const motivoRechazo = textoLimitado(req.data?.motivoRechazo, 500, true, 'Motivo de rechazo');
+  if (!idValido(requisicionId)) fail('invalid-argument', 'Requisicion invalida.');
+  const ref = db.doc(`requisicionesPersonal/${requisicionId}`);
+  const snap = await ref.get();
+  if (!snap.exists) fail('not-found', 'La requisicion ya no existe.');
+  await autorizarPropiedad(actor, snap.data()?.propiedadId);
+  const now = Timestamp.now();
+  return db.runTransaction(async (tx) => {
+    const [freshActor, freshReq] = await Promise.all([
+      tx.get(db.doc(`usuarios/${actor.id}`)), tx.get(ref),
+    ]);
+    const fresh = { ...(freshActor.data() || {}), id: actor.id };
+    if (!freshReq.exists) fail('not-found', 'La requisicion ya no existe.');
+    const row = freshReq.data();
+    if (fresh.activo !== true || !requisicionPuedeAutorizar(fresh) || !puedeVerPropiedad(fresh, row.propiedadId)) fail('permission-denied', 'Tus permisos cambiaron.');
+    if (row.estado !== 'pendiente_autorizacion') fail('failed-precondition', 'La requisicion ya fue atendida.');
+    tx.set(ref, {
+      estado: 'rechazada', motivoRechazo,
+      rechazadoPor: actor.id,
+      rechazadoPorNombre: fresh.nombre || fresh.correo || 'Autorizador',
+      rechazadoEn: now,
+      actualizadoEn: now,
+      actualizadoPor: actor.id,
+    }, { merge: true });
+    tx.create(db.collection('auditoria').doc(), {
+      accion: 'rechazar_requisicion_personal', requisicionId,
+      folio: row.folio || '', propiedadId: row.propiedadId,
+      motivoRechazo, por: actor.id, creadaEn: now,
+    });
+    return { ok: true, requisicionId };
+  });
+});
+
+function serializarRevision(value) {
+  if (value?.toDate) return value.toDate().toISOString();
+  if (Array.isArray(value)) return value.map(serializarRevision);
+  if (value && typeof value==='object') return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,serializarRevision(v)]));
+  return value;
+}
+function tipoRespaldo(bytes) {
+  if (bytes.subarray(0,5).toString()==='%PDF-') return 'application/pdf';
+  if (bytes.length>=3 && bytes[0]===255 && bytes[1]===216 && bytes[2]===255) return 'image/jpeg';
+  if (bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) return 'image/png';
+  return '';
+}
+export const asistenciaCargarRespaldo = endpoint(async req => {
+  const actor=await administradorORHResolverEventuales(req.auth.uid);
+  const {solicitudId,empleadoId,propiedadId,contenido,nombre='respaldo'}=req.data || {};
+  if (![solicitudId,empleadoId,propiedadId].every(idValido) || typeof contenido!=='string' || contenido.length > Math.ceil(MAX_RESPALDO_BYTES/3)*4+8 || !/^[A-Za-z0-9+/]+={0,2}$/.test(contenido)) fail('invalid-argument','Adjunta PDF, JPG o PNG hasta 4 MB.');
+  await autorizarPropiedad(actor,propiedadId);
+  const emp=await db.doc(`asistenciaPersonal/${empleadoId}`).get();
+  if (!emp.exists || emp.data().tipo!=='eventual' || !personalPuedeOperarEnPropiedad(emp.data(),propiedadId)) fail('failed-precondition','Eventual no disponible en esta propiedad.');
+  const bytes=Buffer.from(contenido,'base64'),mime=tipoRespaldo(bytes);
+  if (!mime || bytes.length===0 || bytes.length>MAX_RESPALDO_BYTES) fail('invalid-argument','Documento no valido. Usa PDF, JPG o PNG hasta 4 MB.');
+  const digest=createHash('sha256').update(bytes).digest('hex');
+  const ref=db.doc(`asistenciaRespaldos/${solicitudId}`),path=`asistenciaRespaldos/${propiedadId}/${empleadoId}/${actor.id}/${solicitudId}`;
+  const prior=await ref.get();
+  if (prior.exists) {
+    const d=prior.data();
+    if (d.por!==actor.id || d.empleadoId!==empleadoId || d.propiedadId!==propiedadId || d.sha256!==digest) fail('already-exists','El respaldo ya corresponde a otra operacion.');
+    return {respaldoId:solicitudId};
+  }
+  // Private object: no download token, no public ACL; never overwrite evidence.
+  const file=getStorage().bucket().file(path);
+  try {
+    await file.save(bytes,{resumable:false,preconditionOpts:{ifGenerationMatch:0},metadata:{contentType:mime,cacheControl:'private, no-store',metadata:{por:actor.id,empleadoId,propiedadId,solicitudId,sha256:digest}}});
+  } catch (e) {
+    if (Number(e.code)!==412) throw e;
+    const [m]=await file.getMetadata();
+    if (m.metadata?.sha256!==digest || m.metadata?.por!==actor.id) fail('already-exists','Ya existe otra evidencia para esta operacion.');
+  }
+  const [metadata]=await file.getMetadata();
+  await db.runTransaction(async tx=>{
+    const old=await tx.get(ref);
+    if(old.exists) {
+      if(old.data().sha256!==digest || old.data().por!==actor.id) fail('already-exists','Respaldo incompatible.');
+      return;
+    }
+    tx.create(ref,{path,mime,nombre:String(nombre).replace(/[\r\n/\\]/g,'_').slice(0,120),bytes:bytes.length,sha256:digest,generation:String(metadata.generation || ''),empleadoId,propiedadId,por:actor.id,porNombre:actor.nombre || '',creadoEn:Timestamp.now(),estado:'cargado'});
+  });
+  return {respaldoId:solicitudId};
+});
+export const asistenciaLimitesRevision = endpoint(async req => {
+  await actorConPermiso(req.auth.uid,PERMISOS.REPORTES_EVENTUALES);
+  const limites=await limitesAsistencia();
+  return {limiteHoras:limites.eventual};
+});
+export const asistenciaGuardarJornadaConRespaldo = endpoint(async req => {
+  const actor=await administradorORHResolverEventuales(req.auth.uid);
+  const {solicitudId,jornadaId='',empleadoId,propiedadId,entradaLocal,salidaLocal='',puestoId,motivo='',respaldoId,accion='corregir',versionEsperada=0,confirmarExcepcion=false}=req.data || {};
+  if (![solicitudId,empleadoId,propiedadId,respaldoId].every(idValido) || (jornadaId && !idValido(jornadaId)) || !['corregir','sin_salida'].includes(accion) || typeof motivo!=='string' || motivo.trim().length<10 || motivo.length>1000) fail('invalid-argument','Completa los datos, el motivo (10 caracteres) y un respaldo obligatorio.');
+  if (!jornadaId && accion==='sin_salida') fail('invalid-argument','El alta manual requiere entrada y salida reales.');
+  await autorizarPropiedad(actor,propiedadId);
+  const soporteRef=db.doc(`asistenciaRespaldos/${respaldoId}`),soporte=await soporteRef.get();
+  if (!soporte.exists || soporte.data().por!==actor.id || soporte.data().empleadoId!==empleadoId || soporte.data().propiedadId!==propiedadId) fail('failed-precondition','Falta un respaldo propio y valido para esta persona y propiedad.');
+  const [meta]=await getStorage().bucket().file(soporte.data().path).getMetadata();
+  if (String(meta.generation || '')!==soporte.data().generation || Number(meta.size)!==soporte.data().bytes) fail('failed-precondition','El archivo de respaldo fue modificado o no esta disponible.');
+  const id=jornadaId || `manual_${solicitudId}`;
+  const ref=db.doc(`asistenciaJornadas/${id}`),auditRef=db.doc(`asistenciaAuditoria/revision_${solicitudId}`),stateRef=db.doc(`asistenciaEstado/${empleadoId}`);
+  const limites=await limitesAsistencia();
+  const huella=hash(JSON.stringify({jornadaId,empleadoId,propiedadId,entradaLocal,salidaLocal,puestoId,motivo:motivo.trim(),respaldoId,accion,confirmarExcepcion}));
+  return db.runTransaction(async tx=>{
+    const [fresh,property,emp,oldSnap,stateSnap,evidence,prior] = await Promise.all([
+      tx.get(db.doc(`usuarios/${actor.id}`)),tx.get(db.doc(`propiedades/${propiedadId}`)),tx.get(db.doc(`asistenciaPersonal/${empleadoId}`)),tx.get(ref),tx.get(stateRef),tx.get(soporteRef),tx.get(auditRef)]);
+    if (fresh.data()?.activo!==true || (fresh.data()?.rol!=='administrador' && !tienePermiso(fresh.data(),PERMISOS.RESOLVER_TURNOS_EVENTUALES)) || !puedeVerPropiedad(fresh.data(),propiedadId)) fail('permission-denied','Tus permisos cambiaron.');
+    if (prior.exists) {
+      if(prior.data().por!==actor.id || prior.data().huella!==huella) fail('already-exists','La solicitud ya se utilizo para otra correccion.');
+      return {ok:true,jornadaId:id,repetido:true};
+    }
+    if (!evidence.exists || evidence.data().estado!=='cargado' || evidence.data().por!==actor.id) fail('failed-precondition','El respaldo ya fue utilizado.');
+    if (!property.exists || property.data().activo!==true || !emp.exists || emp.data().tipo!=='eventual' || !personalPuedeOperarEnPropiedad(emp.data(),propiedadId)) fail('failed-precondition','Revisa persona y propiedad.');
+    const old=oldSnap.data() || {},person=emp.data();
+    if (jornadaId && (!oldSnap.exists || old.tipoPersonal!=='eventual' || old.empleadoId!==empleadoId || old.propiedadId!==propiedadId)) fail('failed-precondition','La jornada no corresponde a la persona o propiedad.');
+    if (!jornadaId && oldSnap.exists) fail('already-exists','La jornada manual ya existe.');
+    if (jornadaId && (tiempoMs(old.actualizadoEn) || 0)!==Number(versionEsperada)) fail('aborted','La jornada cambio. Actualiza el reporte antes de editar.');
+    if (old.pagado===true || old.nominaCerrada===true || old.bloqueada===true) fail('failed-precondition','La jornada esta bloqueada o pagada; requiere un ajuste separado.');
+    const zone=old.zonaHoraria || property.data().asistencia?.zonaHoraria || 'America/Mexico_City';
+    let inicio,fin;
+    try { inicio=fechaHoraLocalAMs(entradaLocal,zone); fin=accion==='sin_salida'?null:fechaHoraLocalAMs(salidaLocal,zone); } catch(e) { fail('invalid-argument',e.message); }
+    const now=Timestamp.now();
+    if(inicio>now.toMillis() || (fin!==null && (fin>now.toMillis() || fin<=inicio))) fail('invalid-argument','La salida debe ser posterior a la entrada y ninguna fecha puede estar en el futuro.');
+    if(fin!==null && fin-inicio>72*3600000) fail('invalid-argument','La jornada excede 72 horas. Verifica el documento y las fechas.');
+    if(fin!==null && fin-inicio>=limites.eventual*3600000 && confirmarExcepcion!==true) fail('failed-precondition',`Confirma expresamente la excepcion de ${limites.eventual} horas o mas con respaldo.`);
+    const chosen=String(puestoId || old.puestoId || person.puestoId || '');
+    if(!idValido(chosen)) fail('invalid-argument','Selecciona el puesto realmente desempenado.');
+    const puesto=await tx.get(db.doc(`puestos/${chosen}`));
+    if(!puesto.exists || (puesto.data().activo===false && chosen!==old.puestoId)) fail('failed-precondition','Puesto no disponible.');
+    // Check all this person's shifts (bounded); revisions are exceptional operations.
+    const other=await tx.get(db.collection('asistenciaJornadas').where('empleadoId','==',empleadoId).limit(2001));
+    if(other.size>2000) fail('resource-exhausted','El historial es demasiado amplio; requiere revision de Sistemas.');
+    const candidate={inicio,fin:fin ?? inicio+1};
+    for(const doc of other.docs) {
+      if(doc.id===id) continue;
+      const j=doc.data(),a=tiempoMs(j.entradaEn),b=tiempoMs(j.salidaEn);
+      if(a===null) continue;
+      const end=b ?? (['abierta','salida_pendiente'].includes(j.estado)?now.toMillis():a);
+      if(end>a && seTraslapan(candidate,{inicio:a,fin:end})) fail('failed-precondition','Las horas se traslapan con otra jornada. Revisa primero el registro conflictivo.');
+    }
+    const mismaTarifa=jornadaId && chosen===old.puestoId && Number.isFinite(Number(old.tarifaHoraAplicada)) && old.tarifaHoraAplicada!==null;
+    const tarifa=mismaTarifa?Number(old.tarifaHoraAplicada):Number(puesto.data().tarifaHora || 0);
+    const values={empleadoId,empleadoNombre:person.nombre,claveEmpleado:person.clave || '',tipoPersonal:'eventual',propiedadId,propiedadNombre:property.data().nombre || '',zonaHoraria:zone,fechaJornada:fechaEnZona(new Date(inicio),zone),entradaEn:Timestamp.fromMillis(inicio),salidaEn:fin===null?null:Timestamp.fromMillis(fin),minutos:fin===null?null:Math.floor((fin-inicio)/60000),puestoId:chosen,puestoNombre:puesto.data().nombre || '',tarifaHoraAplicada:tarifa,puestoHabitualId:old.puestoHabitualId || person.puestoId || '',origenTarifa:mismaTarifa?(old.origenTarifa || 'historica_conservada'):'puesto_corregido_con_respaldo',estado:fin===null?'sin_salida':'corregida',revisionValidada:fin!==null,requiereRevision:false,limiteRevisionHoras:limites.eventual,respaldoId,corregidaEn:now,corregidaPor:actor.id,corregidaPorNombre:actor.nombre || '',motivoCorreccion:motivo.trim(),resueltoAdministrativamente:true,origen:jornadaId?(old.origen || 'seguridad_gmr'):'alta_manual_con_respaldo',actualizadoEn:now};
+    const fields=['entradaEn','salidaEn','minutos','puestoId','puestoNombre','tarifaHoraAplicada','fechaJornada','estado','origenTarifa'];
+    const anterior=Object.fromEntries(fields.map(k=>[k,old[k] ?? null]));
+    const nuevo=Object.fromEntries(fields.map(k=>[k,values[k] ?? null]));
+    tx.set(ref,{...values,...(!jornadaId?{creadaEn:now,entradaRegistradaPor:actor.id,salidaRegistradaPor:actor.id}:{}),originalesPrimeraCorreccion:old.originalesPrimeraCorreccion || anterior},{merge:true});
+    // State write serializes simultaneous manual corrections and kiosk entries.
+    const st=stateSnap.data() || {};
+    tx.set(stateRef,{actualizadoEn:now,...(st.jornadaAbiertaId===id?{jornadaAbiertaId:null}:{}),...(st.ultimaJornadaCerradaId===id?{ultimaSalidaEn:values.salidaEn}:{} )},{merge:true});
+    tx.update(soporteRef,{estado:'vinculado',jornadaId:id,auditoriaId:auditRef.id,vinculadoEn:now});
+    tx.create(auditRef,{jornadaId:id,empleadoId,propiedadId,accion:jornadaId?'correccion_con_respaldo':'alta_manual_con_respaldo',anterior,nuevo,motivo:motivo.trim(),respaldoId,por:actor.id,porNombre:actor.nombre || '',creadaEn:now,huella});
+    return {ok:true,jornadaId:id,estado:values.estado,repetido:false};
+  });
+});
+export const asistenciaHistorialRevision = endpoint(async req=>{
+  const actor=await administradorORHResolverEventuales(req.auth.uid),id=String(req.data?.jornadaId || '');
+  if(!idValido(id)) fail('invalid-argument','Jornada invalida.');
+  const snap=await db.doc(`asistenciaJornadas/${id}`).get();
+  if(!snap.exists || snap.data().tipoPersonal!=='eventual') fail('not-found','Jornada no encontrada.');
+  await autorizarPropiedad(actor,snap.data().propiedadId);
+  const audits=await db.collection('asistenciaAuditoria').where('jornadaId','==',id).get();
+  return {historial:audits.docs.map(d=>({id:d.id,...serializarRevision(d.data())})).sort((a,b)=>String(b.creadaEn).localeCompare(String(a.creadaEn)))};
+});
+export const asistenciaDescargarRespaldo = endpoint(async req=>{
+  const actor=await administradorORHResolverEventuales(req.auth.uid),id=String(req.data?.respaldoId || '');
+  if(!idValido(id)) fail('invalid-argument','Respaldo invalido.');
+  const snap=await db.doc(`asistenciaRespaldos/${id}`).get();
+  if(!snap.exists) fail('not-found','Respaldo no encontrado.');
+  const d=snap.data(); await autorizarPropiedad(actor,d.propiedadId);
+  if(d.estado!=='vinculado' && d.por!==actor.id) fail('permission-denied','Respaldo no vinculado.');
+  const [bytes]=await getStorage().bucket().file(d.path).download();
+  return {nombre:d.nombre,mime:d.mime,contenido:bytes.toString('base64')};
+});
+
+export const asistenciaEnviarTurnoRevision = endpoint(async req=>{
+  const actor=await perfil(req.auth.uid);
+  if(!puedeRegistrarAsistencia(actor)) fail('permission-denied','Este perfil no puede operar asistencia.');
+  const {solicitudId,empleadoId,propiedadId,jornadaPendienteId}=req.data || {};
+  if(![solicitudId,empleadoId,propiedadId,jornadaPendienteId].every(idValido)) fail('invalid-argument','Vuelve a escanear a la persona.');
+  await autorizarPropiedad(actor,propiedadId);
+  const limites=await limitesAsistencia(),ref=db.doc(`asistenciaJornadas/${jornadaPendienteId}`),stateRef=db.doc(`asistenciaEstado/${empleadoId}`),audit=db.doc(`asistenciaAuditoria/pendiente_${solicitudId}`);
+  return db.runTransaction(async tx=>{
+    const [fresh,js,ss,prior]=await Promise.all([tx.get(db.doc(`usuarios/${actor.id}`)),tx.get(ref),tx.get(stateRef),tx.get(audit)]);
+    if(!puedeRegistrarAsistencia(fresh.data())||!puedeVerPropiedad(fresh.data(),propiedadId))fail('permission-denied','Tus permisos cambiaron.');
+    if(prior.exists){if(prior.data().por!==actor.id||prior.data().jornadaId!==jornadaPendienteId)fail('already-exists','Identificador de otra operacion.');return {ok:true,repetido:true};}
+    const j=js.data(),now=Timestamp.now();
+    if(!js.exists||j.tipoPersonal!=='eventual'||j.empleadoId!==empleadoId||j.propiedadId!==propiedadId||j.salidaEn||ss.data()?.jornadaAbiertaId!==jornadaPendienteId)fail('failed-precondition','El turno cambio o pertenece a otra propiedad. Actualiza la consulta.');
+    if((horasTranscurridasJornada(j,now.toMillis()) ?? 0)<limites.eventual)fail('failed-precondition','El turno todavia no vence.');
+    tx.update(ref,{estado:'sin_salida',salidaEn:null,minutos:null,requiereRevision:true,limiteRevisionHoras:limites.eventual,motivoCierre:'pendiente_revision_rh',enviadaRevisionPor:actor.id,enviadaRevisionEn:now,actualizadoEn:now});
+    tx.set(stateRef,{jornadaAbiertaId:null,actualizadoEn:now},{merge:true});
+    tx.create(audit,{jornadaId:jornadaPendienteId,empleadoId,propiedadId,accion:'enviar_a_revision',anterior:{estado:j.estado,salidaEn:null},nuevo:{estado:'sin_salida',salidaEn:null},motivo:'Seguridad libera el turno vencido para revision de RH. No se registra salida ni una nueva entrada.',por:actor.id,porNombre:actor.nombre || '',creadaEn:now});
+    return {ok:true,repetido:false};
+  });
 });

@@ -291,6 +291,11 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /requisicionesPersonal/{requisicionId} {
+      // Se opera exclusivamente mediante Cloud Functions para conservar autorización y auditoría.
+      allow read, write: if false;
+    }
+
     match /asistenciaPersonal/{empleadoId} {
       allow read: if usuarioActivo()
         && puedeLeerAsistenciaTipo(resource.data.tipo, resource.data.propiedadId)

@@ -1,0 +1,9 @@
+.gmr-planning-reports {display:flex;gap:12px;flex-wrap:wrap;margin:16px 0}
+.gmr-planning-report-options {display:grid;gap:16px}.gmr-planning-report-options label{display:grid;gap:6px;font-weight:600}
+.gmr-planning-report-options input,.gmr-planning-report-options select{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:8px;padding:10px;font:inherit}
+.gmr-planning-report-actions {display:flex;justify-content:flex-end;margin-top:18px}
+.gmr-planning-prenomina dl {display:grid;grid-template-columns:2fr 1fr;gap:12px}.gmr-planning-prenomina dd{margin:0;font-weight:700}
+.gmr-planning-dates{grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap;padding:12px;border:1px solid #cbd5e1;border-radius:8px}
+.gmr-planning-dates legend{font-weight:600}.gmr-planning-dates label{display:flex;align-items:center;gap:6px;padding:8px;background:#f2f6f9;border-radius:6px}
+.gmr-planning-date-tools{width:100%;display:flex;gap:8px;align-items:center;flex-wrap:wrap}.gmr-planning-date-tools input{max-width:190px}
+@media(max-width:600px){.gmr-planning-reports>button{width:100%}.gmr-planning-prenomina dl{grid-template-columns:1fr}.gmr-planning-dates label{width:100%}}
